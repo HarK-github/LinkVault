@@ -1,9 +1,11 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
 const { initDb, getDb } = require('./src/db');
 const { upload, parseExpiry, UPLOADS_DIR } = require('./src/storage');
+const { getFileById, getFilePath, formatFileResponse } = require('./src/files');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -83,6 +85,39 @@ app.post('/upload', (req, res, next) => {
       return res.status(500).json({ error: 'Failed to process file upload' });
     }
   });
+});
+
+// GET /f/:id - File info or download page
+app.get('/f/:id', (req, res) => {
+  const file = getFileById(req.params.id);
+  if (!file) {
+    return res.status(404).json({ error: 'File not found or link has expired' });
+  }
+
+  // If browser requests HTML page, serve the UI index.html
+  if (req.accepts('html') && !req.xhr && !req.headers['x-requested-with']) {
+    const indexPath = path.join(__dirname, 'public', 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
+  }
+
+  return res.status(200).json(formatFileResponse(file));
+});
+
+// POST /f/:id/download - Stream file with original filename
+app.post('/f/:id/download', (req, res) => {
+  const file = getFileById(req.params.id);
+  if (!file) {
+    return res.status(404).json({ error: 'File not found or link has expired' });
+  }
+
+  const filePath = getFilePath(file.stored_name);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found on disk' });
+  }
+
+  return res.download(filePath, file.original_name);
 });
 
 // Initialize database
