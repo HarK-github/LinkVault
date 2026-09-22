@@ -7,11 +7,6 @@ function getFilePath(storedName) {
   return path.join(UPLOADS_DIR, storedName);
 }
 
-function getFileById(id) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM files WHERE id = ?').get(id);
-}
-
 function deleteFileRecord(id) {
   const db = getDb();
   const file = db.prepare('SELECT stored_name FROM files WHERE id = ?').get(id);
@@ -29,6 +24,33 @@ function deleteFileRecord(id) {
 
   const result = db.prepare('DELETE FROM files WHERE id = ?').run(id);
   return result.changes > 0;
+}
+
+function getFileById(id) {
+  const db = getDb();
+  return db.prepare('SELECT * FROM files WHERE id = ?').get(id);
+}
+
+function getActiveFile(id) {
+  const file = getFileById(id);
+  if (!file) {
+    return null;
+  }
+
+  const now = Date.now();
+  // Check if expired
+  if (file.expires_at <= now) {
+    deleteFileRecord(id);
+    return null;
+  }
+
+  // Check if max downloads exceeded
+  if (file.max_downloads !== null && file.downloads >= file.max_downloads) {
+    deleteFileRecord(id);
+    return null;
+  }
+
+  return file;
 }
 
 function formatFileResponse(file) {
@@ -49,6 +71,7 @@ function formatFileResponse(file) {
 module.exports = {
   getFilePath,
   getFileById,
+  getActiveFile,
   deleteFileRecord,
   formatFileResponse
 };
