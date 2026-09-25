@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { initDb, getDb } = require('./src/db');
 const { upload, parseExpiry, UPLOADS_DIR } = require('./src/storage');
-const { getActiveFile, getFilePath, formatFileResponse } = require('./src/files');
+const { getActiveFile, incrementDownloadAtomic, getFilePath, formatFileResponse } = require('./src/files');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -109,6 +109,12 @@ app.get('/f/:id', (req, res) => {
 app.post('/f/:id/download', (req, res) => {
   const file = getActiveFile(req.params.id);
   if (!file) {
+    return res.status(404).json({ error: 'File not found or link has expired' });
+  }
+
+  // Atomic download counting to eliminate race conditions
+  const updated = incrementDownloadAtomic(file.id);
+  if (!updated) {
     return res.status(404).json({ error: 'File not found or link has expired' });
   }
 

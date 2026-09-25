@@ -44,13 +44,23 @@ function getActiveFile(id) {
     return null;
   }
 
-  // Check if max downloads exceeded
+  // Check if max downloads already reached
   if (file.max_downloads !== null && file.downloads >= file.max_downloads) {
-    deleteFileRecord(id);
     return null;
   }
 
   return file;
+}
+
+function incrementDownloadAtomic(id) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE files
+    SET downloads = downloads + 1
+    WHERE id = ? AND (max_downloads IS NULL OR downloads < max_downloads)
+  `);
+  const result = stmt.run(id);
+  return result.changes > 0;
 }
 
 function formatFileResponse(file) {
@@ -72,6 +82,7 @@ module.exports = {
   getFilePath,
   getFileById,
   getActiveFile,
+  incrementDownloadAtomic,
   deleteFileRecord,
   formatFileResponse
 };
