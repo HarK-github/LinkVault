@@ -6,6 +6,7 @@ const multer = require('multer');
 const { initDb, getDb } = require('./src/db');
 const { upload, parseExpiry, UPLOADS_DIR } = require('./src/storage');
 const { getActiveFile, incrementDownloadAtomic, getFilePath, formatFileResponse } = require('./src/files');
+const { hashPassword, verifyPassword } = require('./src/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -48,6 +49,7 @@ app.post('/upload', (req, res, next) => {
       const size = req.file.size;
       const createdAt = Date.now();
       const expiresAt = parseExpiry(req.body.expiry);
+      const passwordHash = hashPassword(req.body.password);
 
       let maxDownloads = null;
       if (req.body.max_downloads) {
@@ -62,7 +64,7 @@ app.post('/upload', (req, res, next) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
       `);
 
-      stmt.run(id, originalName, storedName, size, null, expiresAt, maxDownloads, deleteToken, createdAt);
+      stmt.run(id, originalName, storedName, size, passwordHash, expiresAt, maxDownloads, deleteToken, createdAt);
 
       const host = req.get('host');
       const protocol = req.protocol;
@@ -76,6 +78,7 @@ app.post('/upload', (req, res, next) => {
         delete_token: deleteToken,
         original_name: originalName,
         size,
+        has_password: Boolean(passwordHash),
         expires_at: expiresAt,
         max_downloads: maxDownloads,
         created_at: createdAt
@@ -105,11 +108,19 @@ app.get('/f/:id', (req, res) => {
   return res.status(200).json(formatFileResponse(file));
 });
 
-// POST /f/:id/download - Stream file with original filename
+// POST /f/:id/download - Verify password, count download, stream file
 app.post('/f/:id/download', (req, res) => {
   const file = getActiveFile(req.params.id);
   if (!file) {
     return res.status(404).json({ error: 'File not found or link has expired' });
+  }
+
+  // Password verification
+  if (file.password_hash) {
+    const providedPassword = req.body && req.body.password;
+    if (!verifyPassword(providedPassword, file.password_hash)) {
+      return res.status(403).json({ error: 'Incorrect or missing password' });
+    }
   }
 
   // Atomic download counting to eliminate race conditions
