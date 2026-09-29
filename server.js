@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { initDb, getDb } = require('./src/db');
 const { upload, parseExpiry, UPLOADS_DIR } = require('./src/storage');
-const { getActiveFile, incrementDownloadAtomic, getFilePath, formatFileResponse } = require('./src/files');
+const { getFileById, getActiveFile, incrementDownloadAtomic, deleteFileRecord, getFilePath, formatFileResponse } = require('./src/files');
 const { hashPassword, verifyPassword } = require('./src/auth');
 
 const app = express();
@@ -135,6 +135,22 @@ app.post('/f/:id/download', (req, res) => {
   }
 
   return res.download(filePath, file.original_name);
+});
+
+// DELETE /f/:id - Delete file using x-delete-token
+app.delete('/f/:id', (req, res) => {
+  const file = getFileById(req.params.id);
+  if (!file) {
+    return res.status(404).json({ error: 'File not found or link has expired' });
+  }
+
+  const token = req.headers['x-delete-token'] || (req.query && req.query.token);
+  if (!token || token !== file.delete_token) {
+    return res.status(403).json({ error: 'Invalid or missing delete token' });
+  }
+
+  deleteFileRecord(file.id);
+  return res.status(200).json({ success: true, message: 'File deleted successfully' });
 });
 
 // Initialize database
