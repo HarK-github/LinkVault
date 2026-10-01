@@ -7,6 +7,8 @@ const { initDb, getDb } = require('./src/db');
 const { upload, parseExpiry, UPLOADS_DIR } = require('./src/storage');
 const { getFileById, getActiveFile, incrementDownloadAtomic, deleteFileRecord, getFilePath, formatFileResponse } = require('./src/files');
 const { hashPassword, verifyPassword } = require('./src/auth');
+const { uploadLimiter, downloadLimiter } = require('./src/limiter');
+const { startCleanupInterval, stopCleanupInterval, runCleanupJob } = require('./src/cleanup');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,7 +29,7 @@ app.get('/health', (req, res) => {
 });
 
 // POST /upload - Save file, insert DB row, return link and delete token
-app.post('/upload', (req, res, next) => {
+app.post('/upload', uploadLimiter, (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
@@ -91,7 +93,7 @@ app.post('/upload', (req, res, next) => {
 });
 
 // GET /f/:id - File info or download page
-app.get('/f/:id', (req, res) => {
+app.get('/f/:id', downloadLimiter, (req, res) => {
   const file = getActiveFile(req.params.id);
   if (!file) {
     return res.status(404).json({ error: 'File not found or link has expired' });
@@ -109,7 +111,7 @@ app.get('/f/:id', (req, res) => {
 });
 
 // POST /f/:id/download - Verify password, count download, stream file
-app.post('/f/:id/download', (req, res) => {
+app.post('/f/:id/download', downloadLimiter, (req, res) => {
   const file = getActiveFile(req.params.id);
   if (!file) {
     return res.status(404).json({ error: 'File not found or link has expired' });
@@ -157,13 +159,18 @@ app.delete('/f/:id', (req, res) => {
 initDb();
 
 let server = null;
+let cleanupInterval = null;
+
 if (require.main === module) {
+  cleanupInterval = startCleanupInterval();
+
   server = app.listen(PORT, () => {
     console.log(`LinkVault server listening on port ${PORT}`);
   });
 
   const shutdown = () => {
     console.log('Shutting down server gracefully...');
+    stopCleanupInterval();
     if (server) {
       server.close(() => {
         console.log('HTTP server closed.');
