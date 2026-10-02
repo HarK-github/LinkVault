@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkVault - Secure Ephemeral File Sharing</title>
+  <meta name="description" content="Share files securely with expiring links, optional passwords, and atomic download limits. No accounts required.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Brand Header -->
+    <header class="app-header">
+      <a href="/" class="brand" id="brand-link">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <span class="brand-title">LinkVault</span>
+      </a>
+      <p class="tagline">Zero-knowledge ephemeral file sharing. Self-destructing links, atomic download caps, and no accounts.</p>
+    </header>
+
+    <!-- Main Card Container -->
+    <main class="glass-card" id="main-card">
+      
+      <!-- Upload Section -->
+      <section id="upload-section">
+        <form id="upload-form">
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="file-input" name="file" required>
+            <div class="dropzone-content">
+              <div class="dropzone-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+              </div>
+              <div class="dropzone-title">Drop your file here, or browse</div>
+              <div class="dropzone-subtitle">Maximum file size 50 MB</div>
+            </div>
+          </div>
+
+          <!-- Selected File Details -->
+          <div class="file-preview" id="file-preview" style="display: none;">
+            <div class="file-preview-info">
+              <div class="file-badge">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                  <polyline points="13 2 13 9 20 9"></polyline>
+                </svg>
+              </div>
+              <div class="file-meta">
+                <div class="file-name" id="preview-name">filename.ext</div>
+                <div class="file-size" id="preview-size">0 KB</div>
+              </div>
+            </div>
+            <button type="button" class="btn-remove" id="btn-remove-file" title="Remove file">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Configuration Controls -->
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="expiry-select">Expiration Time</label>
+              <select id="expiry-select" name="expiry">
+                <option value="10m">10 Minutes</option>
+                <option value="1h">1 Hour</option>
+                <option value="24h" selected>24 Hours (Default)</option>
+                <option value="7d">7 Days</option>
+                <option value="30d">30 Days</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="max-downloads">Max Downloads</label>
+              <input type="number" id="max-downloads" name="max_downloads" placeholder="Unlimited" min="1" max="10000">
+            </div>
+
+            <div class="form-group full-width">
+              <label for="password-input">Password Protection (Optional)</label>
+              <div class="input-wrapper">
+                <input type="password" id="password-input" name="password" placeholder="Leave empty for public link">
+                <span class="input-icon-right" id="toggle-password" title="Show/Hide Password">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="btn-upload">
+            <span id="upload-btn-text">Generate Secure Link</span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Upload Success Result Section -->
+      <section id="result-section" class="result-section" style="display: none;">
+        <div class="result-header">
+          <div class="result-badge-success">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            File Encrypted & Uploaded
+          </div>
+          <h2 id="result-filename" style="font-size: 1.25rem;">document.pdf</h2>
+          <div class="badge-row" style="justify-content: center; margin-top: 0.5rem;">
+            <span class="pill" id="result-size">0 KB</span>
+            <span class="pill" id="result-expiry">Expires in 24h</span>
+            <span class="pill" id="result-downloads">Unlimited downloads</span>
+            <span class="pill" id="result-lock" style="display: none;">Password Protected</span>
+          </div>
+        </div>
+
+        <div class="result-box">
+          <div class="result-box-label">Shareable Link</div>
+          <div class="copy-input-group">
+            <input type="text" id="share-link-input" class="copy-input" readonly>
+            <button type="button" class="btn btn-primary btn-copy" id="btn-copy-link">Copy</button>
+          </div>
+        </div>
+
+        <div class="result-box">
+          <div class="result-box-label">Delete Token (Save this to delete file anytime)</div>
+          <div class="copy-input-group">
+            <input type="text" id="delete-token-input" class="copy-input" readonly>
+            <button type="button" class="btn btn-outline btn-copy" id="btn-copy-token">Copy</button>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem;">
+          <button type="button" class="btn btn-danger" id="btn-delete-now" style="flex: 1;">
+            Delete Now
+          </button>
+          <button type="button" class="btn btn-outline" id="btn-upload-another" style="flex: 1;">
+            Upload Another
+          </button>
+        </div>
+      </section>
+
+      <!-- Download Section (Shown when visiting /f/:id) -->
+      <section id="download-section" class="download-card" style="display: none;">
+        <div class="file-icon-large">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="12" y1="18" x2="12" y2="12"></line>
+            <polyline points="9 15 12 18 15 15"></polyline>
+          </svg>
+        </div>
+
+        <h1 class="download-title" id="dl-filename">Loading file...</h1>
+        
+        <div class="download-stats">
+          <div class="stat-item">
+            <span>Size</span>
+            <span class="stat-value" id="dl-size">--</span>
+          </div>
+          <div class="stat-item">
+            <span>Expires</span>
+            <span class="stat-value" id="dl-expires">--</span>
+          </div>
+          <div class="stat-item">
+            <span>Downloads Left</span>
+            <span class="stat-value" id="dl-remaining">--</span>
+          </div>
+        </div>
+
+        <!-- Password Form for Protected Files -->
+        <div id="dl-password-container" style="display: none; margin-bottom: 1.5rem; text-align: left;">
+          <label for="dl-password" style="display: block; margin-bottom: 0.4rem;">Password Required</label>
+          <input type="password" id="dl-password" placeholder="Enter password to unlock download">
+        </div>
+
+        <button type="button" class="btn btn-primary" id="btn-trigger-download">
+          Download File
+        </button>
+
+        <a href="/" class="btn btn-outline" style="margin-top: 1rem;">
+          Upload Your Own Files
+        </a>
+      </section>
+
+      <!-- 404 / Expired Link State -->
+      <section id="not-found-section" style="display: none; text-align: center; padding: 2rem;">
+        <div style="color: var(--danger); margin-bottom: 1rem;">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+        </div>
+        <h2 style="font-size: 1.35rem; margin-bottom: 0.5rem;">File Not Found or Link Expired</h2>
+        <p style="color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.92rem;">
+          This link is invalid, has reached its download limit, or has expired and was automatically deleted from the server.
+        </p>
+        <a href="/" class="btn btn-primary">Go to LinkVault Home</a>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer>
+      <span>LinkVault • Ephemeral File Storage • Self-destructing links</span>
+    </footer>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
