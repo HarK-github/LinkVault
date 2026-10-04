@@ -1,0 +1,13 @@
+node_modules
+uploads
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+tests/test_scratch
+coverage
+.git
+.gitignore
+.env
+README.md
+projectplan.md

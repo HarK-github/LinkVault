@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: linkvault
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: DB_PATH
+        value: /var/data/linkvault.db
+    # To persist files and database across redeployments on Render paid plans:
+    # disk:
+    #   name: linkvault-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
