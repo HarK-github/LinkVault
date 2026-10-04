@@ -69,9 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Route handling
   const path = window.location.pathname;
-  const archStats = document.getElementById('arch-stats');
   if (path.startsWith('/f/')) {
-    if (archStats) archStats.style.display = 'none';
     const fileId = path.split('/')[2];
     if (fileId) {
       loadDownloadPage(fileId);
@@ -83,7 +81,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load Download Page Data
   async function loadDownloadPage(fileId) {
     currentFileId = fileId;
-    if (archStats) archStats.style.display = 'none';
     uploadSection.style.display = 'none';
     resultSection.style.display = 'none';
 
@@ -392,6 +389,5 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadSection.style.display = 'none';
     notFoundSection.style.display = 'none';
     uploadSection.style.display = 'block';
-    if (archStats) archStats.style.display = 'grid';
   }
 });
