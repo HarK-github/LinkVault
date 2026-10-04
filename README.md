@@ -3,6 +3,8 @@
 LinkVault is an ephemeral, privacy-first file sharing web service built with Node.js, Express, and SQLite.  
 It generates self-destructing download links with configurable time expiration, atomic download limits, and optional password protection without requiring user accounts.
 
+🌐 **Live Production Deployment:** [https://linkvault-chve.onrender.com](https://linkvault-chve.onrender.com)
+
 ---
 
 ## 🚀 Quickstart (Run Locally)
@@ -16,7 +18,7 @@ It generates self-destructing download links with configurable time expiration, 
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/LinkVault.git
+   git clone https://github.com/HarK-github/LinkVault.git
    cd LinkVault
    ```
 
