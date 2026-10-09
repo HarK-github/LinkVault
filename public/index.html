@@ -7,7 +7,7 @@
   <meta name="description" content="Secure, expiring file sharing with optional password protection and download limits.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -17,15 +17,32 @@
       <a href="/" class="brand" id="brand-link">
         <div class="logo-badge">LV</div>
         <div class="brand-text">
-          <h1>LinkVault</h1>
-          <p>Secure, expiring file sharing. No accounts required.</p>
+          <h1>LinkVault ✏️</h1>
+          <p>Handcrafted, ephemeral file sharing. No accounts required.</p>
         </div>
       </a>
     </header>
 
     <!-- Main Panel -->
     <main class="panel" id="main-card">
+      <div class="tape-strip" aria-hidden="true"></div>
       
+      <!-- Mode Switcher Tabs -->
+      <div class="mode-tabs" id="mode-tabs">
+        <button type="button" class="mode-tab active" id="tab-vault">
+          <span>📦 Vault Share</span>
+          <small>Store &amp; Expire (≤ 50 MB)</small>
+        </button>
+        <button type="button" class="mode-tab" id="tab-p2p">
+          <span>⚡ Direct Beam</span>
+          <small>P2P Real-time (Unlimited)</small>
+        </button>
+        <button type="button" class="mode-tab" id="tab-wormhole">
+          <span>🔮 Wormhole</span>
+          <small>Passphrase P2P (E2E)</small>
+        </button>
+      </div>
+
       <!-- Upload Section -->
       <section id="upload-section">
         <form id="upload-form">
@@ -119,30 +136,279 @@
           </div>
         </div>
 
-        <div class="result-box">
-          <div class="result-box-label">Shareable Link</div>
+        <div class="result-box" style="background-color: var(--color-white); border-width: 2.5px;">
+          <div class="result-box-label">📎 Shareable Download Link (Send to recipient)</div>
           <div class="copy-input-group">
             <input type="text" id="share-link-input" class="copy-input" readonly>
+            <button type="button" class="btn btn-secondary btn-copy" id="btn-share-native" style="display: none;">Share ↗</button>
             <button type="button" class="btn btn-primary btn-copy" id="btn-copy-link">Copy</button>
+          </div>
+
+          <!-- Instant QR Code for Mobile Scanning -->
+          <div id="result-qr-container" style="margin-top: 1rem; text-align: center; border-top: 2px dashed var(--color-pencil-light); padding-top: 0.85rem;">
+            <p style="font-size: 0.95rem; font-family: var(--font-heading); color: var(--color-pencil-light); margin-bottom: 0.5rem;">
+              📱 Scan with another phone to download instantly (Zero typing):
+            </p>
+            <div style="display: inline-block; padding: 0.5rem; background: #fff; border: 2.5px solid var(--color-pencil); border-radius: var(--radius-tag); box-shadow: var(--shadow-sm);">
+              <img id="result-qr-img" src="" alt="Scan QR Code to download" style="width: 140px; height: 140px; display: block; margin: 0 auto;">
+            </div>
           </div>
         </div>
 
         <div class="result-box">
-          <div class="result-box-label">Delete Token (Save to delete file anytime)</div>
+          <div class="result-box-label">🔑 Delete Token (Save to delete file early)</div>
           <div class="copy-input-group">
             <input type="text" id="delete-token-input" class="copy-input" readonly>
             <button type="button" class="btn btn-secondary btn-copy" id="btn-copy-token">Copy</button>
           </div>
         </div>
 
-        <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem;">
-          <button type="button" class="btn btn-danger" id="btn-delete-now" style="flex: 1;">
-            Delete File Now
+        <div class="result-actions">
+          <button type="button" class="btn btn-primary" id="btn-upload-another" style="flex: 2;">
+            Upload Another File
           </button>
-          <button type="button" class="btn btn-secondary" id="btn-upload-another" style="flex: 1;">
-            Upload Another
+          <button type="button" class="btn btn-danger" id="btn-delete-now" style="flex: 1;">
+            Delete Now
           </button>
         </div>
+      </section>
+
+      <!-- P2P Direct Beam Sender Section -->
+      <section id="p2p-section" style="display: none;">
+        <div class="dropzone" id="p2p-dropzone">
+          <input type="file" id="p2p-file-input">
+          <div class="dropzone-content">
+            <div class="dropzone-icon p2p-badge" style="width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 0.75rem;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+            </div>
+            <div class="dropzone-title">Drop ANY file for direct P2P transfer</div>
+            <div class="dropzone-subtitle">Zero server storage • Unlimited file size (100 MB – 10 GB+)</div>
+          </div>
+        </div>
+
+        <!-- P2P Active Sender Box -->
+        <div id="p2p-active-panel" style="display: none; margin-top: 1.25rem;">
+          <div class="file-preview" id="p2p-file-preview" style="display: flex;">
+            <div class="file-preview-info">
+              <div class="file-badge p2p-badge">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                </svg>
+              </div>
+              <div class="file-meta">
+                <div class="file-name" id="p2p-file-name">filename.ext</div>
+                <div class="file-size mono" id="p2p-file-size">0 KB</div>
+              </div>
+            </div>
+            <button type="button" class="btn-remove" id="btn-cancel-p2p" title="Cancel Beam">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+
+          <div class="result-box" style="margin-top: 1rem;">
+            <div class="result-box-label">Real-Time P2P Beam Link (Recipient opens this)</div>
+            <div class="copy-input-group">
+              <input type="text" id="p2p-share-link" class="copy-input" readonly placeholder="Generating beam link...">
+              <button type="button" class="btn btn-primary btn-copy" id="btn-copy-p2p-link">Copy</button>
+            </div>
+          </div>
+
+          <div class="p2p-status-box" id="p2p-status-box" style="margin-top: 1rem;">
+            <div class="p2p-status-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span class="p2p-pulse" id="p2p-status-indicator"></span>
+                <span id="p2p-status-text">Waiting for recipient to connect... Keep this tab open.</span>
+              </div>
+              <button type="button" class="btn btn-secondary" id="btn-reconnect-beam-host" style="display: none; padding: 0.25rem 0.65rem; font-size: 0.85rem; min-height: 32px;" title="Reconnect signaling">
+                🔄 Reconnect
+              </button>
+            </div>
+            
+            <div id="p2p-progress-container" style="display: none; margin-top: 1rem;">
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="p2p-progress-fill" style="width: 0%;"></div>
+              </div>
+              <div class="p2p-metrics-row">
+                <span id="p2p-progress-percent">0%</span>
+                <span class="mono" id="p2p-speed-text">0 MB/s</span>
+                <span id="p2p-eta-text">ETA: Calculating...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Wormhole Section -->
+      <section id="wormhole-section" style="display: none;">
+
+        <!-- Wormhole Send Panel -->
+        <div id="wh-send-panel">
+          <div class="wh-panel-label">📤 Send via Wormhole</div>
+
+          <!-- Dropzone (before file selected) -->
+          <div class="dropzone" id="wh-dropzone">
+            <input type="file" id="wh-file-input">
+            <div class="dropzone-content">
+              <div class="dropzone-icon" style="background-color: #f0f4ff; border-color: #6366f1; color: #6366f1;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+              </div>
+              <div class="dropzone-title">Drop file to generate passphrase</div>
+              <div class="dropzone-subtitle">Unlimited size · End-to-end encrypted</div>
+            </div>
+          </div>
+
+          <!-- Active sender state (after file selected) -->
+          <div id="wh-active" style="display: none; margin-top: 1.25rem;">
+            <!-- File badge -->
+            <div class="file-preview" id="wh-file-preview" style="display: flex;">
+              <div class="file-preview-info">
+                <div class="file-badge" style="background-color: #f0f4ff; border-color: #6366f1; color: #6366f1;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                    <polyline points="13 2 13 9 20 9"></polyline>
+                  </svg>
+                </div>
+                <div class="file-meta">
+                  <div class="file-name" id="wh-file-name">filename.ext</div>
+                  <div class="file-size mono" id="wh-file-size">0 KB</div>
+                </div>
+              </div>
+              <button type="button" class="btn-remove" id="btn-cancel-wh" title="Cancel Wormhole">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Passphrase display -->
+            <div class="wh-phrase-box" id="wh-phrase-box" style="display: none;">
+              <div class="wh-phrase-label">🔑 Share this passphrase with the recipient</div>
+              <div class="wh-phrase" id="wh-phrase">generating...</div>
+              <div class="wh-phrase-hint">Say it aloud, type it, or copy it — they enter it on their device</div>
+              <button type="button" class="btn btn-secondary" id="btn-copy-phrase" style="margin-top: 0.75rem; font-size: 1rem; min-height: 40px;">
+                📋 Copy Passphrase
+              </button>
+            </div>
+
+            <!-- Status -->
+            <div class="p2p-status-box" id="wh-send-status" style="margin-top: 1rem; display: none;">
+              <div class="p2p-status-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <span class="p2p-pulse" id="wh-send-indicator"></span>
+                  <span id="wh-send-status-text">Generating secure room...</span>
+                </div>
+                <button type="button" class="btn btn-secondary" id="btn-reconnect-wh-send" style="display: none; padding: 0.25rem 0.65rem; font-size: 0.85rem; min-height: 32px;" title="Reconnect session">
+                  🔄 Reconnect
+                </button>
+              </div>
+              <div id="wh-send-progress" style="display: none; margin-top: 1rem;">
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill wh-fill" id="wh-send-progress-fill" style="width: 0%;"></div>
+                </div>
+                <div class="p2p-metrics-row">
+                  <span id="wh-send-percent">0%</span>
+                  <span class="mono" id="wh-send-speed">0 MB/s</span>
+                  <span id="wh-send-eta">ETA: --</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="wh-divider">── or ──</div>
+
+        <!-- Wormhole Receive Panel -->
+        <div id="wh-recv-panel">
+          <div class="wh-panel-label">📥 Receive via Wormhole</div>
+
+          <!-- Passphrase input (before connecting) -->
+          <div id="wh-recv-input-panel">
+            <div class="form-group" style="margin-bottom: 0.85rem;">
+              <label for="wh-recv-phrase">Enter passphrase from sender</label>
+              <input type="text" id="wh-recv-phrase" placeholder="e.g. swift-42-river"
+                     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            </div>
+            <button type="button" class="btn btn-primary wh-recv-btn" id="btn-wh-connect">
+              🔮 Connect &amp; Receive
+            </button>
+          </div>
+
+          <!-- Active receive state (after connecting) -->
+          <div id="wh-recv-active" style="display: none; margin-top: 1.25rem;">
+            <div class="p2p-status-box">
+              <div class="p2p-status-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <span class="p2p-pulse" id="wh-recv-indicator"></span>
+                  <span id="wh-recv-status-text">Deriving secure key...</span>
+                </div>
+                <button type="button" class="btn btn-secondary" id="btn-reconnect-wh-recv" style="display: none; padding: 0.25rem 0.65rem; font-size: 0.85rem; min-height: 32px;" title="Reconnect session">
+                  🔄 Reconnect
+                </button>
+              </div>
+            </div>
+
+            <!-- File info (shown after onMeta) -->
+            <div id="wh-recv-meta" style="display: none; margin-top: 1rem;">
+              <div class="file-preview" style="display: flex;">
+                <div class="file-preview-info">
+                  <div class="file-badge" style="background-color: #f0f4ff; border-color: #6366f1; color: #6366f1;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                      <polyline points="13 2 13 9 20 9"></polyline>
+                    </svg>
+                  </div>
+                  <div class="file-meta">
+                    <div class="file-name" id="wh-recv-fname">--</div>
+                    <div class="file-size mono" id="wh-recv-fsize">--</div>
+                  </div>
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-primary" id="btn-wh-accept" style="margin-top: 1rem; background-color: #f0f4ff; border-color: #6366f1; color: #3730a3;">
+                ⚡ Accept &amp; Save File
+              </button>
+              <p style="font-size: 0.85rem; color: var(--color-pencil-light); text-align: center; margin-top: 0.4rem;">Streams directly to disk · Zero RAM overhead</p>
+            </div>
+
+            <!-- Progress -->
+            <div id="wh-recv-progress" style="display: none; margin-top: 1rem;">
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill wh-fill" id="wh-recv-progress-fill" style="width: 0%;"></div>
+              </div>
+              <div class="p2p-metrics-row">
+                <span id="wh-recv-percent">0%</span>
+                <span class="mono" id="wh-recv-speed">0 MB/s</span>
+                <span id="wh-recv-eta">ETA: --</span>
+              </div>
+            </div>
+
+            <!-- Error/fallback -->
+            <div id="wh-recv-error" style="display: none; margin-top: 1rem; padding: 0.85rem; border: 2px dashed var(--color-marker-red); border-radius: var(--radius-tag); background: #fee2e2; text-align: center;">
+              <p style="color: var(--danger); font-family: var(--font-heading); font-size: 1.05rem;" id="wh-recv-error-text">Connection failed.</p>
+              <button type="button" class="btn btn-secondary" id="btn-wh-retry" style="margin-top: 0.6rem; font-size: 1rem; min-height: 40px;">Try Again</button>
+            </div>
+
+            <!-- Download button for mobile / memory fallback -->
+            <div id="wh-recv-done" style="display: none; margin-top: 1rem; text-align: center;">
+              <a href="#" class="btn btn-primary" id="btn-wh-download" download style="display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; width: 100%; min-height: 48px; font-size: 1.1rem; background-color: #059669; border-color: #059669;">
+                💾 Download File
+              </a>
+              <p style="font-size: 0.85rem; color: var(--color-pencil-light); margin-top: 0.5rem;">File received! Tap above if download didn't start automatically.</p>
+            </div>
+          </div>
+        </div>
+
       </section>
 
       <!-- Download Section (Shown when visiting /f/:id) -->
@@ -183,9 +449,90 @@
           Download File
         </button>
 
+        <!-- Manual Delete Token Option on Download Page -->
+        <div class="dl-delete-box" style="margin-top: 2rem; border-top: 2px dashed var(--color-erased); padding-top: 1.25rem;">
+          <details style="text-align: left; cursor: pointer;">
+            <summary style="font-family: var(--font-heading); font-size: 1.15rem; color: var(--color-pencil-light); user-select: none;">
+              🗑️ Have the Delete Token? Delete this file early
+            </summary>
+            <div style="margin-top: 0.85rem;">
+              <div class="copy-input-group">
+                <input type="text" id="manual-delete-token" class="copy-input" placeholder="Paste your 32-character delete token">
+                <button type="button" class="btn btn-danger btn-copy" id="btn-manual-delete">Delete</button>
+              </div>
+            </div>
+          </details>
+        </div>
+
         <div style="margin-top: 1.25rem;">
           <a href="/" class="btn-link">
             &larr; Upload a file
+          </a>
+        </div>
+      </section>
+
+      <!-- P2P Receiver Section (Shown when visiting /beam/:roomId) -->
+      <section id="p2p-receive-section" class="download-card" style="display: none;">
+        <div class="file-icon-large" style="color: var(--accent);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </div>
+
+        <h1 class="download-title" id="p2p-recv-filename">Connecting to sender...</h1>
+        <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;" id="p2p-recv-status">Direct P2P Handshake in progress</p>
+        <div style="display: flex; justify-content: center; margin-top: 0.5rem;">
+          <button type="button" class="btn btn-secondary" id="btn-reconnect-beam-peer" style="display: none; padding: 0.25rem 0.65rem; font-size: 0.85rem; min-height: 32px;" title="Reconnect session">
+            🔄 Reconnect
+          </button>
+        </div>
+
+        <div class="download-stats-grid" id="p2p-recv-stats" style="margin: 1.5rem 0; display: none;">
+          <div class="stat-card">
+            <div class="stat-title">File Size</div>
+            <div class="stat-value mono" id="p2p-recv-size">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">Storage Pipeline</div>
+            <div class="stat-value" id="p2p-recv-mode" style="font-size: 0.95rem; color: var(--success);">Direct-to-Disk</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">Live Speed</div>
+            <div class="stat-value mono" id="p2p-recv-speed">0 MB/s</div>
+          </div>
+        </div>
+
+        <div id="p2p-recv-prompt" style="display: none; margin: 1.25rem 0;">
+          <button type="button" class="btn btn-primary" id="btn-accept-beam" style="max-width: 320px; margin: 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+            <span>⚡ Accept &amp; Start Transfer</span>
+          </button>
+          <p style="color: var(--text-muted); font-size: 0.78rem; margin-top: 0.5rem; text-align: center;">
+            Streams directly to disk via File System Access API (Zero RAM overhead)
+          </p>
+        </div>
+
+        <div id="p2p-recv-progress-box" style="display: none; width: 100%; margin-top: 1rem;">
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="p2p-recv-progress-fill" style="width: 0%;"></div>
+          </div>
+          <div class="p2p-metrics-row">
+            <span id="p2p-recv-progress-percent">0%</span>
+            <span id="p2p-recv-eta">ETA: Calculating...</span>
+          </div>
+        </div>
+
+        <div id="p2p-recv-fallback-box" style="display: none; margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--warning); border-radius: var(--radius-sm); background: rgba(245, 158, 11, 0.1); text-align: center;">
+          <p style="color: var(--warning); font-size: 0.875rem; font-weight: 500;" id="p2p-fallback-text">
+            Direct connection failed (Firewall / Symmetric NAT).
+          </p>
+          <a href="/" class="btn btn-secondary" style="display: inline-block; margin-top: 0.75rem;">
+            Switch to Vault Share instead
+          </a>
+        </div>
+
+        <div style="margin-top: 1.5rem;">
+          <a href="/" class="btn-link">
+            &larr; Go to LinkVault Home
           </a>
         </div>
       </section>
@@ -212,13 +559,37 @@
 
     <!-- Footer -->
     <footer>
-      <span>LinkVault • Ephemeral file sharing</span>
+      <div style="margin-bottom: 1rem;">
+        <details style="display: inline-block; text-align: left; max-width: 440px; width: 100%; cursor: pointer;">
+          <summary style="text-align: center; font-size: 1.05rem; color: var(--color-pencil-light); user-select: none;">
+            🗑️ Have a delete token? Purge a file early
+          </summary>
+          <div class="result-box" style="margin-top: 0.85rem; background-color: var(--color-white);">
+            <div class="form-group" style="margin-bottom: 0.6rem;">
+              <label for="home-del-id" style="font-size: 0.95rem;">File ID or Download Link</label>
+              <input type="text" id="home-del-id" placeholder="e.g. 5f4e... or /f/5f4e..." style="font-size: 1rem; padding: 0.5rem 0.75rem;">
+            </div>
+            <div class="form-group" style="margin-bottom: 0.75rem;">
+              <label for="home-del-token" style="font-size: 0.95rem;">Delete Token</label>
+              <input type="text" id="home-del-token" placeholder="Paste your 32-character delete token" style="font-size: 1rem; padding: 0.5rem 0.75rem;">
+            </div>
+            <button type="button" class="btn btn-danger" id="btn-home-purge" style="width: 100%; min-height: 44px; font-size: 1.15rem;">
+              Purge File Now
+            </button>
+          </div>
+        </details>
+      </div>
+      <span>LinkVault • Handcrafted ephemeral file sharing</span>
     </footer>
   </div>
 
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toast-container"></div>
 
+  <script src="/p2p-cache.js"></script>
+  <script src="/p2p.js"></script>
+  <script src="/wordlist.js"></script>
+  <script src="/wormhole.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

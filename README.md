@@ -1,181 +1,322 @@
 # LinkVault 🔐
 
-LinkVault is an ephemeral, privacy-first file sharing web service built with Node.js, Express, and SQLite.  
-It generates self-destructing download links with configurable time expiration, atomic download limits, and optional password protection without requiring user accounts.
+[![Node.js](https://img.shields.io/badge/Node.js-v20+-green.svg?logo=node.js)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4.x-blue.svg?logo=express)](https://expressjs.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-WAL_Mode-blueviolet.svg?logo=sqlite)](https://www.sqlite.org/)
+[![WebRTC](https://img.shields.io/badge/WebRTC-P2P_Streaming-orange.svg?logo=webrtc)](https://webrtc.org/)
+[![Security](https://img.shields.io/badge/Crypto-AES--256--GCM_%2B_ECDH-brightgreen.svg)](https://w3c.github.io/webcrypto/)
+[![Tests](https://img.shields.io/badge/Tests-22_Passing-success.svg?logo=jest)](https://jestjs.io/)
+[![License](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
 
-🌐 **Live Production Deployment:** [https://linkvault-chve.onrender.com](https://linkvault-chve.onrender.com)
+> A privacy-first, zero-knowledge file sharing web app that supports expiring server links, unlimited direct peer-to-peer browser streaming, and end-to-end encrypted transfers with memorable passphrases.
 
 ---
 
-## 🚀 Quickstart (Run Locally)
+## 1. Project Title & One-Line Description
+**LinkVault** is a full-stack, privacy-first file sharing platform combining three distinct transfer engines: asynchronous temporary server vaults, unlimited browser-to-browser WebRTC streaming, and password-authenticated end-to-end encrypted Wormholes.
+
+---
+
+## 2. Problem It Solves / Why I Built It
+
+### The Problem
+Traditional file sharing tools (Google Drive, WeTransfer, Dropbox) suffer from three common issues:
+1. **Privacy Concerns:** Centralized servers hold unencrypted files on their drives, leaving personal data vulnerable to leaks or data mining.
+2. **Bandwidth & Storage Limits:** Free cloud tiers impose strict storage quotas (e.g. 2 GB caps) and throttle download speeds.
+3. **Link Rot & Lingering Files:** People upload a file for a one-time transfer, but the file lingers on the server indefinitely because manual deletion is forgotten.
+
+### Why I Built LinkVault
+LinkVault was designed to give users complete control over their files with three tailored solutions:
+- When you need to send a small file asynchronously (so you can close your computer): **Vault Share** holds it temporarily, enforces download limits, and deletes it automatically.
+- When you need to send a massive 10 GB video directly to a colleague: **Direct Beam** streams it browser-to-browser with **zero server storage** and **unlimited file size**.
+- When you are in the same room or on a phone call and want maximum security: **Magic Wormhole** encrypts the file end-to-end with AES-256-GCM using a memorable 3-word passphrase (like `swift-42-river`).
+
+---
+
+## 3. Features
+
+- **📦 Vault Share (Server-Stored Ephemeral Links):**
+  - Files up to 50 MB with customizable self-destruction timers (e.g., 30m, 2h, 7d).
+  - Atomic one-time download limits (prevents race conditions when multiple people click the link simultaneously).
+  - Optional password protection hashed with `bcryptjs`.
+  - Secret `delete_token` returned to the uploader for early manual purging.
+  - Background cleanup cron job that purges expired files and database records every 10 minutes.
+  - Instant vector QR codes for quick camera scanning from mobile devices.
+
+- **⚡ Direct Beam (Browser-to-Browser WebRTC Streaming):**
+  - Completely bypasses the server: file flows peer-to-peer.
+  - Unlimited file sizes (100 MB – 10 GB+).
+  - Direct-to-Disk streaming via the **File System Access API** (`showSaveFilePicker`): RAM usage stays flat at ~2 MB even for huge files.
+  - Backpressure flow control (`bufferedamountlow`) to prevent network congestion and browser tab crashes.
+  - Mobile resilience: handles screen locking and backgrounding with automatic reconnection grace periods.
+
+- **🔮 Magic Wormhole (PAKE & End-to-End Encryption):**
+  - Human-friendly 3-word passphrases (e.g., `swift-42-river`) with 1.6+ million entropy combinations.
+  - 128-bit Room ID derivation via PBKDF2 (50,000 iterations).
+  - Ephemeral ECDH (P-256) key exchange over a blind WebSocket signaling relay.
+  - AES-256-GCM authenticated encryption for every 64 KB chunk.
+  - Automatic fallback: If strict symmetric NAT blocks direct WebRTC UDP traffic, it seamlessly switches to an Encrypted Blind Relay over WebSockets where the server only sees ciphertext.
+
+---
+
+## 4. Tech Stack (And Why Each Tool Was Chosen)
+
+```mermaid
+graph TD
+    Client["Client Browser<br/>(Vanilla HTML5 / CSS3 / ES6)"]
+    Server["Backend Server<br/>(Node.js + Express)"]
+    DB[("SQLite Database<br/>(better-sqlite3 + WAL)")]
+    FS["Local Disk<br/>(/uploads directory)"]
+    WS["Signaling Hub<br/>(ws WebSocketServer)"]
+    Peer["Recipient Browser<br/>(WebRTC DataChannel)"]
+
+    Client -->|HTTP REST /upload /download| Server
+    Server -->|Metadata Queries| DB
+    Server -->|Stream Binary Files| FS
+    Client <-->|Signaling Handshake| WS
+    Client <-->|Direct P2P DataChannel| Peer
+```
+
+| Technology | Role | Why It Was Chosen |
+|---|---|---|
+| **Node.js** | Backend Runtime | Non-blocking event loop handles thousands of concurrent WebSocket connections and streaming uploads with minimal resource usage. |
+| **Express.js** | Web Framework | Lightweight, battle-tested REST API routing with simple middleware support (`express-rate-limit`, `multer`). |
+| **SQLite (`better-sqlite3`)** | Database | Synchronous, embedded relational database that runs in-process. Requires no external database servers to manage and supports Write-Ahead Logging (WAL) for high concurrency. |
+| **WebSockets (`ws`)** | Real-Time Signaling | Full-duplex, low-latency communication required for WebRTC SDP offers/answers, ICE candidate exchange, and blind ciphertext relaying. |
+| **WebRTC (`RTCDataChannel`)** | Peer-to-Peer Transport | Native browser protocol allowing direct device-to-device data transfer without uploading files to intermediate servers. |
+| **Web Cryptography API** | End-to-End Encryption | Native browser `crypto.subtle` provides hardware-accelerated PBKDF2, ECDH P-256, and AES-256-GCM encryption with zero external JavaScript dependencies. |
+| **Bcrypt (`bcryptjs`)** | Password Hashing | Industry standard adaptive hashing algorithm with salt rounds to prevent rainbow table attacks on password-protected files. |
+| **Jest & Supertest** | Testing Suite | Automated testing framework for verifying REST API responses, concurrency race conditions, and WebSocket signaling behavior. |
+
+---
+
+## 5. Project Structure
+
+```
+LinkVault/
+├── package.json              # Project dependencies, scripts, and engine configurations
+├── server.js                 # Main HTTP server, REST endpoints, and WebSocket attachment
+├── linkvault.db              # SQLite database file (created automatically at startup)
+├── uploads/                  # Storage folder for temporary Vault Share files
+├── src/
+│   ├── auth.js               # Password hashing and constant-time password verification (bcrypt)
+│   ├── cleanup.js            # Background cron job that cleans expired files from disk and DB
+│   ├── db.js                 # SQLite database connection setup and table schemas
+│   ├── files.js              # Database helper functions, atomic download increments, and queries
+│   ├── limiter.js            # Rate limiting configuration (prevents DoS on uploads and downloads)
+│   ├── signaling.js          # WebSocket server managing WebRTC and Wormhole room coordination
+│   └── storage.js            # Multer disk upload configuration and human expiry string parsing
+├── public/
+│   ├── index.html            # Single-page web interface for all three sharing modes
+│   ├── style.css             # Responsive styling, dark theme, and micro-animations
+│   ├── app.js                # DOM controller: tab switching, upload handling, progress UI
+│   ├── p2p.js                # WebRTC Direct Beam client engine with backpressure flow control
+│   ├── p2p-cache.js          # Lightweight IndexedDB store for transfer resume metadata
+│   ├── wormhole.js           # Wormhole engine: PBKDF2, ECDH key exchange, AES-256-GCM encryption
+│   └── wordlist.js           # 128 adjectives and 128 nouns for generating friendly passphrases
+└── tests/
+    ├── fileshare.test.js     # 12 automated unit tests for Vault Share REST APIs and concurrency
+    └── signaling.test.js     # 10 automated unit tests for WebRTC and Wormhole WebSocket signaling
+```
+
+---
+
+## 6. How It Works (Step-by-Step Flow)
+
+### Engine 1: Vault Share (Expiring Cloud Link)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Uploader as Uploader Browser
+    participant Server as Express Server
+    participant DB as SQLite DB
+    participant Disk as /uploads Folder
+    actor Downloader as Recipient Browser
+
+    Uploader->>Server: POST /upload (File + Expiry + Password)
+    Server->>Disk: Save file with random UUID
+    Server->>DB: INSERT file record (expires_at, max_downloads, delete_token)
+    Server-->>Uploader: Return link (/f/:id), QR code, and delete_token
+
+    Downloader->>Server: GET /f/:id/download (with password)
+    Server->>DB: UPDATE files SET downloads = downloads + 1 WHERE id = ? AND downloads < max_downloads
+    alt Atomic Check Passed
+        Server->>Downloader: Stream file binary (Content-Disposition: attachment)
+    else Limit Exceeded or Expired
+        Server-->>Downloader: 404 File Not Found
+    end
+```
+
+### Engine 2: Direct Beam (P2P WebRTC Streaming)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Host as Sender Browser
+    participant WS as WebSocket Server
+    actor Peer as Recipient Browser
+
+    Host->>WS: create-room
+    WS-->>Host: room-created (Room ID)
+    Host-->>Peer: Shares link (/beam/:roomId)
+    Peer->>WS: join-room (Room ID)
+    WS-->>Host: peer-joined
+    Host->>WS: signal (SDP Offer)
+    WS->>Peer: signal (SDP Offer)
+    Peer->>WS: signal (SDP Answer)
+    WS->>Host: signal (SDP Answer)
+    Note over Host,Peer: WebRTC P2P DataChannel Established Directly!
+    Host->>Peer: Stream 64 KB binary chunks (Direct-to-Disk)
+```
+
+### Engine 3: Magic Wormhole (End-to-End Encrypted Transfer)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Sender as Sender Browser
+    participant WS as Blind WebSocket Relay
+    actor Receiver as Receiver Browser
+
+    Sender->>Sender: Generate "swift-42-river" & ECDH Keypair
+    Sender->>WS: wh-open (RoomID = PBKDF2, PubKey = SenderKey)
+    Sender-->>Receiver: Speaks/text passphrase "swift-42-river"
+    Receiver->>Receiver: Compute RoomID = PBKDF2 & ECDH Keypair
+    Receiver->>WS: wh-join (RoomID, PubKey = ReceiverKey)
+    WS->>Sender: Relay ReceiverKey
+    WS->>Receiver: Relay SenderKey
+    Note over Sender,Receiver: Both derive same 256-bit AES-GCM Key via ECDH!
+    Sender->>Receiver: Send encrypted 64 KB chunks (AES-256-GCM)
+```
+
+---
+
+## 7. Installation & How to Run It
 
 ### Prerequisites
 - **Node.js**: v18.0.0 or higher (v20+ recommended)
 - **npm**: v9.0.0 or higher
-- C/C++ compiler and Python 3 for compiling native SQLite bindings (`better-sqlite3`)
+- Standard C/C++ build tools (for compiling native `better-sqlite3` bindings)
 
-### Installation & Run
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/HarK-github/LinkVault.git
-   cd LinkVault
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Start the development server:**
-   ```bash
-   npm start
-   # or with live reloading:
-   npm run dev
-   ```
-
-4. **Open your browser:**
-   Navigate to [http://localhost:3000](http://localhost:3000) to access the web application.
-
-5. **Run the test suite:**
-   ```bash
-   npm test
-   ```
-
----
-
-## 📡 API Specification
-
-| Method | Endpoint | Description | Headers / Auth | Request Body | Status Codes |
-|---|---|---|---|---|---|
-| `GET` | `/health` | Service health status | None | None | `200` |
-| `POST` | `/upload` | Upload a file (up to 50 MB) | `multipart/form-data` | `file`: file blob<br>`expiry`: `10m`, `1h`, `24h`, `7d`, `30d`<br>`max_downloads`: integer (optional)<br>`password`: string (optional) | `201`: Upload succeeded<br>`400`: Missing file or bad input<br>`413`: Exceeds 50 MB<br>`429`: Rate limit hit |
-| `GET` | `/f/:id` | Download page / metadata | `Accept: application/json` or browser navigation | None | `200`: File metadata<br>`404`: Missing, expired, or used up |
-| `POST` | `/f/:id/download` | Download binary payload | `Content-Type: application/json` | `password`: string (if protected) | `200`: Binary file stream<br>`403`: Incorrect password<br>`404`: Missing, expired, or used up<br>`429`: Rate limit hit |
-| `DELETE` | `/f/:id` | Delete file immediately | `x-delete-token: <token>` | None | `200`: Successfully deleted<br>`403`: Invalid or missing token<br>`404`: File not found |
-
----
-
-## ⚡ Concurrency & The Atomic Download Counter
-
-When a file link has a restricted download count (such as a 1-time self-destructing link), concurrent requests could trigger a classic **check-then-act** race condition:
-If two recipients request the file simultaneously, both could read `downloads = 0`, both approve the request, and both receive the file—violating the download constraint.
-
-LinkVault solves this at the database engine level using an atomic SQLite `UPDATE` statement:
-
-```sql
-UPDATE files 
-SET downloads = downloads + 1
-WHERE id = ? 
-  AND (max_downloads IS NULL OR downloads < max_downloads);
+### Step 1: Clone the Repository
+```bash
+git clone https://github.com/HarK-github/LinkVault.git
+cd LinkVault
 ```
 
-### Why This Is Bulletproof:
-1. **Single Atomic Statement:** SQLite evaluates the `WHERE` condition and updates the row in a single atomic transaction step under WAL mode (`journal_mode = WAL`).
-2. **Zero Row Mutation Guard:** If another request increments the counter first, the condition `downloads < max_downloads` evaluates to `false`. The update modifies `0` rows (`info.changes === 0`).
-3. **Immediate Rejection:** If `info.changes === 0`, LinkVault aborts file streaming immediately and returns `404 File not found or link has expired`.
-4. **Clean Disk Streaming:** The file remains safely on disk while active streams are in flight, and subsequent or cleanup cycles remove exhausted files without interrupting active reads.
-
----
-
-## 🧪 Measured Test Results & Benchmarks
-
-LinkVault includes an automated test suite verifying functional requirements, security boundaries, and high-concurrency race conditions:
-
-```
-PASS tests/fileshare.test.js
-  LinkVault File Sharing Test Suite
-    ✓ GET /health returns 200 OK (58 ms)
-    ✓ Upload then download returns identical file payload and filename (95 ms)
-    ✓ Expired link returns 404 on both info and download (44 ms)
-    ✓ Password-protected link rejects wrong password (403) and allows correct password (200) (406 ms)
-    ✓ Link with 1 max download works once, then returns 404 on subsequent attempt (62 ms)
-    ✓ Concurrency test: 20 parallel downloads to a 1-download link results in exactly 1 success (200) and 19 rejections (404) (175 ms)
-    ✓ File over 50 MB size limit returns 413 and does not save to disk (1468 ms)
-    ✓ Delete with wrong token returns 403, right token returns 200 and purges record (41 ms)
-    ✓ Cleanup job removes expired and used-up files from disk and DB (34 ms)
-
-Test Suites: 1 passed, 1 total
-Tests:       9 passed, 9 total
-Time:        3.517 s
+### Step 2: Install Dependencies
+```bash
+npm install
 ```
 
-### Concurrency Stress Benchmark
-- **Test:** Fired **20 concurrent asynchronous requests** simultaneously (`Promise.all`) at a link configured for `max_downloads: 1`.
-- **Result:** **Exactly 1 request** received status `200` with the file payload; **19 requests** received status `404`. No duplicate streams occurred.
+### Step 3: Run the Server
+```bash
+# Start production server:
+npm start
+
+# Or start development server with live reload:
+npm run dev
+```
+
+### Step 4: Open in Your Browser
+Open your browser and navigate to:
+```
+http://localhost:3000
+```
+
+### Step 5: Run Automated Tests
+```bash
+npm test
+```
+*(Runs 22 comprehensive automated tests verifying uploads, downloads, concurrency limits, password verification, and signaling protocols).*
 
 ---
 
-## ☁️ Deployment Guide (Render)
+## 8. Example Usage / Sample Input & Output
 
-LinkVault is production-ready for deployment on **[Render](https://render.com)**.
+### 1. Uploading a File via cURL (REST API)
+```bash
+curl -X POST http://localhost:3000/upload \
+  -F "file=@sample.pdf" \
+  -F "expiry=2h" \
+  -F "max_downloads=1" \
+  -F "password=secret123"
+```
 
-### Method 1: Render Blueprint (Infrastructure-as-Code) — Recommended
+**Sample Output (201 Created):**
+```json
+{
+  "id": "7b3a9c1482e01df4b791e84a",
+  "download_url": "/f/7b3a9c1482e01df4b791e84a",
+  "full_url": "http://localhost:3000/f/7b3a9c1482e01df4b791e84a",
+  "delete_token": "a18ef4b2089c253d867c4e5f90123abc",
+  "original_name": "sample.pdf",
+  "size": 245890,
+  "has_password": true,
+  "expires_at": 1772658400000,
+  "max_downloads": 1,
+  "created_at": 1772651200000
+}
+```
 
-The repository includes a ready-to-use [`render.yaml`](./render.yaml) blueprint:
+### 2. Downloading a Password-Protected File
+```bash
+curl -X POST http://localhost:3000/f/7b3a9c1482e01df4b791e84a/download \
+  -H "Content-Type: application/json" \
+  -d '{"password":"secret123"}' \
+  --output downloaded_sample.pdf
+```
 
-1. Push this repository to your GitHub or GitLab account.
-2. In the [Render Dashboard](https://dashboard.render.com), click **New +** and select **Blueprint**.
-3. Connect your repository. Render automatically reads `render.yaml` and provisions:
-   - **Service Type**: Web Service
-   - **Runtime**: Node
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
-   - **Health Check Path**: `/health`
-4. Click **Apply**. Render will build and deploy the application with a public HTTPS URL (e.g., `https://linkvault.onrender.com`).
+### 3. Immediate Deletion via Secret Token
+```bash
+curl -X DELETE http://localhost:3000/f/7b3a9c1482e01df4b791e84a \
+  -H "x-delete-token: a18ef4b2089c253d867c4e5f90123abc"
+```
 
-### Method 2: Manual Web Service Setup on Render
-
-1. Click **New +** > **Web Service**.
-2. Connect your Git repository.
-3. Configure the following settings:
-   - **Name**: `linkvault`
-   - **Environment**: `Node`
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
-   - **Health Check Path**: `/health`
-4. Add Environment Variables:
-   - `NODE_ENV`: `production`
-   - `PORT`: `10000` (or leave default for Render to inject)
-
-### Method 3: Docker Deployment on Render
-
-Render also supports direct container deployment using the included [`Dockerfile`](./Dockerfile):
-- Set **Runtime** to `Docker`
-- Render will build the multi-stage image, compile SQLite, and expose port 3000.
-
-### 📌 Render Deployment Notes & Gotchas:
-- **Proxy Trust:** `server.js` includes `app.set('trust proxy', 1)` so that client IP detection, rate limiting (`express-rate-limit`), and full URL reconstruction work seamlessly behind Render's reverse proxy.
-- **Ephemeral Storage on Free Tier:** On Render's free tier, local disk storage is ephemeral and is cleared on every redeployment or instance spin-down. If you want permanent persistence across redeploys, attach a Render Persistent Disk mounted at `/var/data` (configured in `render.yaml`).
-- **Instance Sleep:** On free tier instances, the service sleeps after 15 minutes of inactivity. The background cleanup job (`setInterval`) runs whenever the instance is awake, and expired links are also lazily cleaned up on access.
-
----
-
-## 🛡️ Security & Privacy Architecture
-
-- **Random Link Identifiers:** URLs use cryptographically strong IDs generated via `crypto.randomBytes(12)` (24 hexadecimal characters), preventing link enumeration or guessing.
-- **Random Disk Filenames:** Uploaded files are saved on disk with random UUIDs (`crypto.randomUUID()`) to prevent filesystem collisions and path traversal attacks.
-- **Bcrypt Password Hashing:** User passwords are never saved in plaintext; they are hashed with `bcryptjs` using 10 salt rounds and verified using constant-time comparison.
-- **No Password in URLs:** Passwords must be submitted via `POST /f/:id/download`, never as URL query parameters (which could be leaked in browser history or access logs).
-- **Uniform 404 Response:** Missing files, expired links, and exhausted download links all return the identical `404 File not found or link has expired` error, preventing attackers from discovering whether a link ever existed.
-- **Rate Limiting:** Protects `/upload` (20/hr per IP) and `/f/:id` downloads (100/15min per IP) against brute-force attacks and abuse.
-- **Zero Account Footprint:** No tracking cookies, no personal identity records, and no user registration required.
+**Sample Output (200 OK):**
+```json
+{
+  "success": true,
+  "message": "File deleted successfully"
+}
+```
 
 ---
 
-## ⚠️ Known Limitations (v1)
+## 9. Challenges Faced & How They Were Solved
 
-- **Local Storage:** Files are stored on the server's local disk; not yet backed by cloud object storage (S3/Cloudflare R2).
-- **No User Accounts:** Designed purely for anonymous, ephemeral transfers; does not provide a user dashboard.
-- **Antivirus Scanning:** Files are not scanned for malware prior to storage; users should only download files from trusted senders.
+### Challenge 1: The "Check-Then-Act" Race Condition in Download Limits
+- **The Problem:** When a file has a maximum download limit of 1, if 20 people click the link at the exact same millisecond, a standard server would read `downloads = 0`, allow all 20 users to download, and then increment `downloads = 20`.
+- **The Solution:** We eliminated this race condition by using a single atomic SQL statement in SQLite:
+  ```sql
+  UPDATE files
+  SET downloads = downloads + 1
+  WHERE id = ? AND (max_downloads IS NULL OR downloads < max_downloads);
+  ```
+  SQLite guarantees this executes atomically. Only the first request modifies 1 row (`changes === 1`); all subsequent simultaneous requests modify 0 rows (`changes === 0`) and receive a 404 response.
+
+### Challenge 2: Browser Memory Exhaustion on Multi-Gigabyte Transfers
+- **The Problem:** In WebRTC, if you read a 5 GB file into JavaScript memory, the browser tab runs out of memory and crashes.
+- **The Solution:** We implemented two cooperating mechanisms:
+  1. **Backpressure Flow Control:** We slice the file into 64 KB pieces. If `dataChannel.bufferedAmount > 1 MB`, reading pauses and waits for the browser's `onbufferedamountlow` event before reading the next piece.
+  2. **File System Access API (`showSaveFilePicker`):** On the receiving side, incoming chunks are streamed directly into a file handle on disk. RAM usage remains flat at ~2 MB regardless of whether the file is 50 MB or 20 GB.
+
+### Challenge 3: Symmetric NAT & Firewall Blocks in WebRTC
+- **The Problem:** On certain cellular networks and corporate Wi-Fi, symmetric NAT prevents browsers from establishing direct UDP connections.
+- **The Solution:** We built a dual-transport fallback inside the Wormhole engine. If the WebRTC DataChannel fails to establish within 4 seconds, the system seamlessly activates an **Encrypted Blind Relay** over WebSockets. The file chunks are encrypted with AES-256-GCM in the browser, and the server blindly forwards the ciphertext. The server never has the decryption key, preserving end-to-end privacy.
+
+### Challenge 4: Mobile Screen Locking & App Switching
+- **The Problem:** On iOS Safari and Android Chrome, switching to another app or locking the screen terminates active WebSocket connections immediately.
+- **The Solution:** We added a 60-second disconnect grace timer on the signaling server, paired with client-side listeners for `visibilitychange`, `online`, and `focus`. When the user unlocks their phone, the client automatically sends a `reconnect` packet, restoring the transfer without data loss.
 
 ---
 
-## 📝 Resume Bullet
+## 10. Future Improvements
 
-- *Built a file-sharing service (Express, SQLite) with expiring, password-protected, download-limited links; used atomic SQL updates to enforce download limits under concurrency (verified with parallel-request tests) and added a scheduled job to delete expired files.*
+1. **TURN Server Integration (coturn):** Deploy a self-hosted open-source TURN relay for 100% direct WebRTC connectivity across restrictive corporate firewalls.
+2. **Chunk Checksumming (Blake3 / SHA-256):** Add per-chunk cryptographic hashes so that interrupted transfers can verify individual chunks rather than re-transmitting slices.
+3. **Multi-File / Folder Bundling:** Support transferring whole directories by streaming ZIP archives on-the-fly using browser Web Streams.
+4. **Offline Local Peer Discovery:** Use mDNS or Web Bluetooth to discover nearby devices on the same local Wi-Fi without needing internet access.
 
 ---
 
 ## 📄 License
-ISC License.
+This project is open-source and licensed under the **ISC License**.

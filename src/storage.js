@@ -1,66 +1,140 @@
+/**
+ * LinkVault - File Storage and Multer Upload Configuration
+ *
+ * This module configures how incoming files are saved to the server's hard drive:
+ * 1. Checks that the uploads folder exists.
+ * 2. Generates random, unguessable filenames using crypto.randomUUID() to prevent collisions.
+ * 3. Enforces a maximum file size limit (50 MB).
+ * 4. Parses human-readable expiration inputs (e.g. "30m", "2h", "7d", or raw numbers).
+ */
+
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
 
+// Directory where uploaded files will be stored on the server
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
 
+// Ensure the upload directory exists when the server starts
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+// Maximum allowed upload size: 50 Megabytes (in bytes)
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+/**
+ * Configure Multer to save uploaded files directly to disk.
+ * Each file is given a random UUID filename plus its original extension,
+ * preventing users from overwriting existing files with the same name.
+ */
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, UPLOADS_DIR);
+  destination: function (req, file, callback) {
+    callback(null, UPLOADS_DIR);
   },
-  filename: (req, file, cb) => {
-    // Generate a random, cryptographically secure unique filename on disk
-    const randomName = crypto.randomUUID() + path.extname(file.originalname).slice(0, 10);
-    cb(null, randomName);
+  filename: function (req, file, callback) {
+    const fileExtension = path.extname(file.originalname).slice(0, 10);
+    const uniqueFileName = crypto.randomUUID() + fileExtension;
+    callback(null, uniqueFileName);
   }
 });
 
-// Max 50 MB upload limit
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
-
+// Multer upload middleware instance
 const upload = multer({
-  storage,
+  storage: storage,
   limits: {
     fileSize: MAX_FILE_SIZE
   }
 });
 
+/**
+ * Converts a human-readable duration string (like "15m", "2h", "3d", "1w")
+ * into a future timestamp in milliseconds.
+ *
+ * @param {string} text - The input string.
+ * @param {number} currentTime - The current timestamp in milliseconds.
+ * @returns {number|null} Future timestamp, or null if format was not recognized.
+ */
+function parseHumanExpiryString(text, currentTime) {
+  const cleaned = text.trim().toLowerCase();
+  const pattern = /^(\d+)\s*(m|min|minute|minutes|h|hr|hour|hours|d|day|days|w|week|weeks)$/;
+  const match = cleaned.match(pattern);
+
+  if (!match) {
+    return null;
+  }
+
+  const amount = parseInt(match[1], 10);
+  const unit = match[2];
+
+  const ONE_MINUTE_MS = 60 * 1000;
+  const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
+  const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+  const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+
+  if (unit.startsWith('m')) {
+    return currentTime + amount * ONE_MINUTE_MS;
+  }
+  if (unit.startsWith('h')) {
+    return currentTime + amount * ONE_HOUR_MS;
+  }
+  if (unit.startsWith('d')) {
+    return currentTime + amount * ONE_DAY_MS;
+  }
+  if (unit.startsWith('w')) {
+    return currentTime + amount * ONE_WEEK_MS;
+  }
+
+  return null;
+}
+
+/**
+ * Calculates the expiration timestamp based on user input.
+ *
+ * Supports:
+ * - Empty/undefined: Defaults to 24 hours from now.
+ * - Millisecond timestamp: e.g. 1770000000000 (after year 2020).
+ * - Number of hours: e.g. 1, 24, 72.
+ * - Human strings: e.g. "30m", "4h", "2d", "1w".
+ *
+ * @param {string|number} [expiryInput] - The raw expiry parameter from the user.
+ * @returns {number} Expiration timestamp in milliseconds (Date.now() + duration).
+ */
 function parseExpiry(expiryInput) {
   const now = Date.now();
+  const DEFAULT_24_HOURS_MS = 24 * 60 * 60 * 1000;
+
+  // 1. If nothing was provided, default to 24 hours
   if (!expiryInput) {
-    // Default 24 hours
-    return now + 24 * 60 * 60 * 1000;
+    return now + DEFAULT_24_HOURS_MS;
   }
 
+  // 2. If given as a number or a numeric string
   if (typeof expiryInput === 'number' || !isNaN(Number(expiryInput))) {
     const num = Number(expiryInput);
-    // If sent as timestamp in milliseconds (greater than year 2020)
-    if (num > 1577836800000) {
+
+    // If it's already a future timestamp (greater than Jan 1, 2020)
+    const TIMESTAMP_THRESHOLD_2020 = 1577836800000;
+    if (num > TIMESTAMP_THRESHOLD_2020) {
       return num;
     }
-    // If sent as hours
-    return now + num * 60 * 60 * 1000;
+
+    // Otherwise treat it as a number of hours
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    return now + num * ONE_HOUR_MS;
   }
 
+  // 3. If given as a text string (e.g. "2h", "10m", "3d")
   if (typeof expiryInput === 'string') {
-    const match = expiryInput.trim().toLowerCase().match(/^(\d+)\s*(m|min|minute|minutes|h|hr|hour|hours|d|day|days|w|week|weeks)$/);
-    if (match) {
-      const val = parseInt(match[1], 10);
-      const unit = match[2];
-      if (unit.startsWith('m')) return now + val * 60 * 1000;
-      if (unit.startsWith('h')) return now + val * 60 * 60 * 1000;
-      if (unit.startsWith('d')) return now + val * 24 * 60 * 60 * 1000;
-      if (unit.startsWith('w')) return now + val * 7 * 24 * 60 * 60 * 1000;
+    const parsedFromText = parseHumanExpiryString(expiryInput, now);
+    if (parsedFromText !== null) {
+      return parsedFromText;
     }
   }
 
-  // Fallback default 24h
-  return now + 24 * 60 * 60 * 1000;
+  // 4. Fallback default: 24 hours
+  return now + DEFAULT_24_HOURS_MS;
 }
 
 module.exports = {
