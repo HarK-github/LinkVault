@@ -17,7 +17,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
-const QRCode = require('qrcode');
 
 // Internal modules
 const { initDb, getDb } = require('./src/db');
@@ -35,92 +34,31 @@ const { uploadLimiter, downloadLimiter } = require('./src/limiter');
 const { startCleanupInterval, stopCleanupInterval } = require('./src/cleanup');
 const { initSignaling } = require('./src/signaling');
 
-// Create the Express application
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Tell Express to trust reverse proxy headers (e.g. from Render or Cloudflare)
-// This ensures client IP addresses are read accurately for rate limiting.
 app.set('trust proxy', 1);
-
-// Middleware to parse JSON and URL-encoded form data
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Serve static frontend files (HTML, CSS, client-side JS) from the public/ folder
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-/**
- * Parses the optional max_downloads field from the upload request body.
- *
- * @param {string|number} rawValue - User input for max downloads.
- * @returns {number|null} Valid positive integer, or null if unlimited.
- */
 function parseMaxDownloads(rawValue) {
-  if (!rawValue) {
-    return null;
-  }
-  const parsedNumber = parseInt(rawValue, 10);
-  if (!isNaN(parsedNumber) && parsedNumber > 0) {
-    return parsedNumber;
-  }
-  return null;
+  const n = parseInt(rawValue, 10);
+  return n > 0 ? n : null;
 }
 
-/**
- * Constructs the absolute URL for a download link based on request headers.
- *
- * @param {object} req - Express request object.
- * @param {string} relativePath - The relative path (e.g. /f/abcdef123456).
- * @returns {string} Full URL (e.g. https://linkvault.example.com/f/abcdef123456).
- */
 function buildFullUrl(req, relativePath) {
-  const host = req.get('host');
-  const protocol = req.protocol;
-  if (host) {
-    return `${protocol}://${host}${relativePath}`;
-  }
-  return relativePath;
+  return req.get('host') ? `${req.protocol}://${req.get('host')}${relativePath}` : relativePath;
 }
 
 // ============================================================================
 // ROUTES & ENDPOINTS
 // ============================================================================
 
-/**
- * GET /health
- * Lightweight health check endpoint used by hosting providers (Render, Fly.io, etc.)
- * to verify that the server is alive and responding.
- */
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: Date.now() });
 });
 
-/**
- * GET /qr
- * Generates an SVG QR code for any given URL or text.
- * Allows mobile users to scan their phone camera directly off a desktop screen.
- */
-app.get('/qr', (req, res) => {
-  const text = req.query.text;
-  if (!text) {
-    return res.status(400).send('Missing text parameter');
-  }
-
-  // Generate vector SVG QR code (sharp at any resolution)
-  QRCode.toString(text, { type: 'svg', margin: 1, width: 220 }, (err, svg) => {
-    if (err) {
-      return res.status(500).send('Failed to generate QR code');
-    }
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
-    return res.status(200).send(svg);
-  });
-});
 
 /**
  * POST /upload
@@ -204,33 +142,17 @@ app.post('/upload', uploadLimiter, (req, res) => {
  */
 app.get('/f/:id', downloadLimiter, (req, res) => {
   const file = getActiveFile(req.params.id);
-  const isHtmlBrowserRequest = Boolean(req.headers.accept && req.headers.accept.includes('text/html') && !req.xhr);
+  const isHtml = Boolean(req.headers.accept && req.headers.accept.includes('text/html') && !req.xhr);
   const indexPath = path.join(__dirname, 'public', 'index.html');
 
-  if (!file) {
-    if (isHtmlBrowserRequest && fs.existsSync(indexPath)) {
-      return res.status(404).sendFile(indexPath);
-    }
-    return res.status(404).json({ error: 'File not found or link has expired' });
+  if (isHtml) {
+    return res.status(file ? 200 : 404).sendFile(indexPath);
   }
-
-  if (isHtmlBrowserRequest && fs.existsSync(indexPath)) {
-    return res.status(200).sendFile(indexPath);
-  }
-
-  return res.status(200).json(formatFileResponse(file));
+  return file ? res.status(200).json(formatFileResponse(file)) : res.status(404).json({ error: 'File not found or link has expired' });
 });
 
-/**
- * GET /beam/:roomId
- * Serves the single-page application for direct WebRTC peer-to-peer file transfers.
- */
 app.get('/beam/:roomId', (req, res) => {
-  const indexPath = path.join(__dirname, 'public', 'index.html');
-  if (fs.existsSync(indexPath)) {
-    return res.sendFile(indexPath);
-  }
-  return res.status(404).send('Page not found');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 /**
@@ -302,8 +224,7 @@ function handleDownload(req, res) {
 }
 
 // Support both POST and GET for seamless downloads on desktop and mobile browsers
-app.post('/f/:id/download', downloadLimiter, handleDownload);
-app.get('/f/:id/download', downloadLimiter, handleDownload);
+app.all('/f/:id/download', downloadLimiter, handleDownload);
 
 /**
  * DELETE /f/:id

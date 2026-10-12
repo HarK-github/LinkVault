@@ -29,9 +29,7 @@ function getFilePath(storedName) {
  */
 function removeFileFromDisk(fullPath) {
   try {
-    if (fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
-    }
+    fs.rmSync(fullPath, { force: true });
   } catch (err) {
     console.error(`Failed to delete file from disk (${fullPath}):`, err.message);
   }
@@ -176,6 +174,7 @@ function formatFileResponse(file) {
 
 module.exports = {
   getFilePath,
+  removeFileFromDisk,
   getFileById,
   getActiveFile,
   incrementDownloadAtomic,

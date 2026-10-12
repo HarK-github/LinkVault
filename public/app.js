@@ -232,37 +232,23 @@ document.addEventListener('DOMContentLoaded', () => {
    * @param {string} successMsg - Toast confirmation message.
    */
   async function copyText(text, btnEl, successMsg) {
-    let copied = false;
-    if (navigator.clipboard && window.isSecureContext) {
-      try {
+    try {
+      if (navigator.clipboard) {
         await navigator.clipboard.writeText(text);
-        copied = true;
-      } catch (e) {}
-    }
-
-    if (!copied) {
-      try {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        textarea.setAttribute('readonly', '');
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        copied = document.execCommand('copy');
-        textarea.remove();
-      } catch (e) {}
-    }
-
-    if (copied) {
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
       const originalText = btnEl.textContent;
       btnEl.textContent = '✅ Copied!';
       showToast(successMsg, 'success');
-      setTimeout(() => {
-        btnEl.textContent = originalText;
-      }, 2000);
-    } else {
+      setTimeout(() => { btnEl.textContent = originalText; }, 2000);
+    } catch (e) {
       showToast('Please copy the text manually.', 'info');
     }
   }
@@ -415,8 +401,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Update QR Code image for phone camera scanning
       const qrImg = document.getElementById('result-qr-img');
-      if (qrImg) {
-        qrImg.src = `/qr?text=${encodeURIComponent(finalShareUrl)}`;
+      if (qrImg && window.LinkVaultQR) {
+        const svg = window.LinkVaultQR.generateSvg(finalShareUrl);
+        qrImg.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
       }
 
       uploadSection.style.display = 'none';
@@ -1156,18 +1143,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Reconnection trigger when returning to browser tab
   const resumeActiveSessions = () => {
     if (document.visibilityState === 'visible') {
-      if (hostBeamSession && typeof hostBeamSession.checkAndReconnect === 'function') {
-        hostBeamSession.checkAndReconnect();
-      }
-      if (peerBeamSession && typeof peerBeamSession.checkAndReconnect === 'function') {
-        peerBeamSession.checkAndReconnect();
-      }
-      if (whSendSession && typeof whSendSession.checkAndReconnect === 'function') {
-        whSendSession.checkAndReconnect();
-      }
-      if (whRecvSession && typeof whRecvSession.checkAndReconnect === 'function') {
-        whRecvSession.checkAndReconnect();
-      }
+      [hostBeamSession, peerBeamSession, whSendSession, whRecvSession].forEach((s) => {
+        if (s && typeof s.checkAndReconnect === 'function') s.checkAndReconnect();
+      });
     }
   };
 

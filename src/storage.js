@@ -48,45 +48,11 @@ const upload = multer({
   }
 });
 
-/**
- * Converts a human-readable duration string (like "15m", "2h", "3d", "1w")
- * into a future timestamp in milliseconds.
- *
- * @param {string} text - The input string.
- * @param {number} currentTime - The current timestamp in milliseconds.
- * @returns {number|null} Future timestamp, or null if format was not recognized.
- */
 function parseHumanExpiryString(text, currentTime) {
-  const cleaned = text.trim().toLowerCase();
-  const pattern = /^(\d+)\s*(m|min|minute|minutes|h|hr|hour|hours|d|day|days|w|week|weeks)$/;
-  const match = cleaned.match(pattern);
-
-  if (!match) {
-    return null;
-  }
-
-  const amount = parseInt(match[1], 10);
-  const unit = match[2];
-
-  const ONE_MINUTE_MS = 60 * 1000;
-  const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
-  const ONE_DAY_MS = 24 * ONE_HOUR_MS;
-  const ONE_WEEK_MS = 7 * ONE_DAY_MS;
-
-  if (unit.startsWith('m')) {
-    return currentTime + amount * ONE_MINUTE_MS;
-  }
-  if (unit.startsWith('h')) {
-    return currentTime + amount * ONE_HOUR_MS;
-  }
-  if (unit.startsWith('d')) {
-    return currentTime + amount * ONE_DAY_MS;
-  }
-  if (unit.startsWith('w')) {
-    return currentTime + amount * ONE_WEEK_MS;
-  }
-
-  return null;
+  const match = text.trim().toLowerCase().match(/^(\d+)\s*(m|min|minute|minutes|h|hr|hour|hours|d|day|days|w|week|weeks)$/);
+  if (!match) return null;
+  const mult = { m: 60e3, h: 36e5, d: 864e5, w: 6048e5 }[match[2][0]];
+  return mult ? currentTime + parseInt(match[1], 10) * mult : null;
 }
 
 /**

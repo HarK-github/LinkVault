@@ -56,41 +56,14 @@
   // CRYPTOGRAPHIC & HEX HELPERS
   // ============================================================================
 
-  // Lookup table for fast byte-to-hex conversion (e.g. 255 -> "ff")
-  const HEX_TABLE = [];
-  for (let i = 0; i < 256; i++) {
-    HEX_TABLE[i] = i.toString(16).padStart(2, '0');
-  }
-
-  /**
-   * Converts an ArrayBuffer to a hexadecimal string.
-   *
-   * @param {ArrayBuffer} buffer - Binary data buffer.
-   * @returns {string} Hex string (e.g. "4a7f...").
-   */
   function bufferToHex(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let hexString = '';
-    for (let i = 0; i < bytes.length; i++) {
-      hexString += HEX_TABLE[bytes[i]];
-    }
-    return hexString;
+    return Array.from(new Uint8Array(buffer), (b) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  /**
-   * Converts a hexadecimal string back into an ArrayBuffer.
-   *
-   * @param {string} hex - Hexadecimal string.
-   * @returns {ArrayBuffer} Binary data buffer.
-   */
   function hexToBuffer(hex) {
-    const byteLength = hex.length / 2;
-    const uint8Array = new Uint8Array(byteLength);
-    for (let i = 0; i < byteLength; i++) {
-      const hexByte = hex.substr(i * 2, 2);
-      uint8Array[i] = parseInt(hexByte, 16);
-    }
-    return uint8Array.buffer;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return bytes.buffer;
   }
 
   /**

@@ -14,18 +14,9 @@ const fs = require('fs');
 // so the entire server shares the same connection instead of opening new ones.
 let dbInstance = null;
 
-/**
- * Ensures the directory for the database file exists on disk.
- *
- * @param {string} filePath - The absolute or relative path to the database file.
- */
 function ensureDatabaseDirectoryExists(filePath) {
-  if (filePath === ':memory:') {
-    return; // In-memory database does not use a folder on disk
-  }
-  const folderPath = path.dirname(filePath);
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
+  if (filePath !== ':memory:') {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
   }
 }
 
