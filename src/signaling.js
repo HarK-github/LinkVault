@@ -23,7 +23,9 @@ function safeSend(ws, payload) {
 }
 
 function getOtherWs(room, ws) {
-  return ws === room.hostWs ? room.peerWs : room.hostWs;
+  if (ws === room.hostWs) return room.peerWs;
+  if (ws === room.peerWs) return room.hostWs;
+  return null;
 }
 
 function destroyRoom(roomId, reason = 'Room closed') {
@@ -35,8 +37,16 @@ function destroyRoom(roomId, reason = 'Room closed') {
   });
 
   const notice = { type: 'peer-disconnected', message: reason };
-  safeSend(room.hostWs, notice);
-  safeSend(room.peerWs, notice);
+  if (room.hostWs) {
+    safeSend(room.hostWs, notice);
+    room.hostWs.activeRoomId = null;
+    room.hostWs.role = null;
+  }
+  if (room.peerWs) {
+    safeSend(room.peerWs, notice);
+    room.peerWs.activeRoomId = null;
+    room.peerWs.role = null;
+  }
   rooms.delete(roomId);
 }
 
@@ -45,13 +55,17 @@ function handlePeerDisconnect(ws, reason) {
   if (!roomId || !rooms.has(roomId)) return;
   const room = rooms.get(roomId);
 
+  const role = ws.role;
+  if (!role) return;
+
+  // Guard against stale socket close: if this socket was already replaced by a reconnected one, ignore
+  if (ws !== room[`${role}Ws`]) return;
+
   if (DISCONNECT_GRACE_MS === 0) {
     destroyRoom(roomId, reason);
     return;
   }
 
-  const role = ws.role;
-  if (!role) return;
   const otherWs = getOtherWs(room, ws);
   const timerKey = `${role}GraceTimer`;
 
@@ -77,8 +91,13 @@ function relay(ws, roomId, type, data) {
     if (type !== 'wh-chunk') safeSend(ws, { type: 'error', message: 'Room not found' });
     return;
   }
-  const target = getOtherWs(rooms.get(id), ws);
-  if (target && target.readyState === target.OPEN) {
+  const room = rooms.get(id);
+  const target = getOtherWs(room, ws);
+  if (!target) {
+    safeSend(ws, { type: 'error', message: 'Unauthorized peer in room' });
+    return;
+  }
+  if (target.readyState === target.OPEN) {
     safeSend(target, { type, data });
   }
 }

@@ -183,12 +183,44 @@ describe('LinkVault WebSocket Signaling Engine Test Suite', () => {
     host.close();
   });
 
-  describe('Wormhole PAKE / Blind Relay Signaling', () => {
-    const mockRoomId = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
-    const hostPubkey = '04abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
-    const peerPubkey = '04fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321';
+  test('reconnect reattaches socket and notifies peer', async () => {
+    const host = await createClient();
+    const peer = await createClient();
 
-    test('Host opens a wormhole room with wh-open', async () => {
+    // Host creates standard room
+    const hostCreate = waitForMessage(host, (m) => m.type === 'room-created');
+    host.send(JSON.stringify({ type: 'create-room' }));
+    const { roomId } = await hostCreate;
+
+    // Peer joins
+    const peerJoined = waitForMessage(peer, (m) => m.type === 'room-joined');
+    peer.send(JSON.stringify({ type: 'join-room', roomId }));
+    await peerJoined;
+
+    // New socket for peer reconnecting
+    const peerNewSocket = await createClient();
+    const peerAck = waitForMessage(peerNewSocket, (m) => m.type === 'reconnected');
+    const hostResumed = waitForMessage(host, (m) => m.type === 'peer-resumed');
+
+    peerNewSocket.send(JSON.stringify({ type: 'reconnect', roomId, role: 'peer' }));
+
+    const ack = await peerAck;
+    const resumed = await hostResumed;
+    expect(ack.type).toBe('reconnected');
+    expect(ack.role).toBe('peer');
+    expect(resumed.type).toBe('peer-resumed');
+
+    host.close();
+    peer.close();
+    peerNewSocket.close();
+  });
+
+  describe('Wormhole Protocol (E2EE PAKE Relay)', () => {
+    const mockRoomId = 'test-wormhole-123';
+    const hostPubkey = '04aabbccddeeff00112233445566778899aabbccddeeff';
+    const peerPubkey = '04ffeeddccbbaa99887766554433221100ffeeddccbbaa';
+
+    test('Host opens wormhole room and receives wh-ready confirmation', async () => {
       const host = await createClient();
 
       const readyPromise = waitForMessage(host, (m) => m.type === 'wh-ready');
@@ -203,40 +235,33 @@ describe('LinkVault WebSocket Signaling Engine Test Suite', () => {
       expect(res.roomId).toBe(mockRoomId);
       expect(rooms.has(mockRoomId)).toBe(true);
 
+      const room = rooms.get(mockRoomId);
+      expect(room.isWormhole).toBe(true);
+      expect(room.hostPubkey).toBe(hostPubkey);
+
       host.close();
     });
 
-    test('Receiver joins via wh-join and peers cross-exchange ECDH public keys', async () => {
+    test('Peer joins wormhole room, performs key exchange handshake', async () => {
       const host = await createClient();
       const peer = await createClient();
 
-      // 1. Host opens
+      // Host opens
       const readyPromise = waitForMessage(host, (m) => m.type === 'wh-ready');
-      host.send(JSON.stringify({
-        type: 'wh-open',
-        roomId: mockRoomId,
-        pubkey: hostPubkey
-      }));
+      host.send(JSON.stringify({ type: 'wh-open', roomId: mockRoomId, pubkey: hostPubkey }));
       await readyPromise;
 
-      // 2. Peer joins
+      // Peer joins
       const hostNotifiedPromise = waitForMessage(host, (m) => m.type === 'wh-peer-joined');
-      const peerJoinedPromise = waitForMessage(peer, (m) => m.type === 'wh-joined');
+      const peerAckPromise = waitForMessage(peer, (m) => m.type === 'wh-joined');
 
-      peer.send(JSON.stringify({
-        type: 'wh-join',
-        roomId: mockRoomId,
-        pubkey: peerPubkey
-      }));
+      peer.send(JSON.stringify({ type: 'wh-join', roomId: mockRoomId, pubkey: peerPubkey }));
 
-      const peerAck = await peerJoinedPromise;
+      const peerAck = await peerAckPromise;
       const hostAck = await hostNotifiedPromise;
 
-      // Peer receives host's public key
       expect(peerAck.type).toBe('wh-joined');
       expect(peerAck.pubkey).toBe(hostPubkey);
-
-      // Host receives peer's public key
       expect(hostAck.type).toBe('wh-peer-joined');
       expect(hostAck.pubkey).toBe(peerPubkey);
 
@@ -382,37 +407,6 @@ describe('LinkVault WebSocket Signaling Engine Test Suite', () => {
       host.close();
       peer.close();
     });
-
-    test('reconnect reattaches socket and notifies peer', async () => {
-      const host = await createClient();
-      const peer = await createClient();
-
-      // Host creates standard room
-      const hostCreate = waitForMessage(host, (m) => m.type === 'room-created');
-      host.send(JSON.stringify({ type: 'create-room' }));
-      const { roomId } = await hostCreate;
-
-      // Peer joins
-      const peerJoined = waitForMessage(peer, (m) => m.type === 'room-joined');
-      peer.send(JSON.stringify({ type: 'join-room', roomId }));
-      await peerJoined;
-
-      // New socket for peer reconnecting
-      const peerNewSocket = await createClient();
-      const peerAck = waitForMessage(peerNewSocket, (m) => m.type === 'reconnected');
-      const hostResumed = waitForMessage(host, (m) => m.type === 'peer-resumed');
-
-      peerNewSocket.send(JSON.stringify({ type: 'reconnect', roomId, role: 'peer' }));
-
-      const ack = await peerAck;
-      const resumed = await hostResumed;
-      expect(ack.type).toBe('reconnected');
-      expect(ack.role).toBe('peer');
-      expect(resumed.type).toBe('peer-resumed');
-
-      host.close();
-      peer.close();
-      peerNewSocket.close();
-    });
   });
 });
+

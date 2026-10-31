@@ -31,10 +31,12 @@ describe('LinkVault File Sharing Test Suite', () => {
   });
 
   // Health Check
-  test('GET /health returns 200 OK', async () => {
+  test('GET /health returns 200 OK with runtime engine status', async () => {
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+    expect(res.body.database).toBe('sqlite');
+    expect(['local-disk', 'cloudflare-r2', 'supabase-s3', 's3-compatible']).toContain(res.body.storage);
     expect(res.body.timestamp).toBeDefined();
   });
 
@@ -236,4 +238,151 @@ describe('LinkVault File Sharing Test Suite', () => {
     const row = db.prepare('SELECT * FROM files WHERE id = ?').get(fileId);
     expect(row).toBeUndefined();
   });
+
+  // Test 9: POST /upload/presign initializes metadata record
+  test('POST /upload/presign creates pending record and returns management credentials', async () => {
+    const res = await request(app)
+      .post('/upload/presign')
+      .send({
+        filename: 'cloud-document.pdf',
+        size: 1048576,
+        mimeType: 'application/pdf',
+        expiry: '2h',
+        max_downloads: 5
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeDefined();
+    expect(res.body.delete_token).toBeDefined();
+    expect(res.body.download_url).toBe(`/f/${res.body.id}`);
+    expect(res.body.original_name).toBe('cloud-document.pdf');
+    expect(res.body.size).toBe(1048576);
+    expect(res.body.storage_type).toBe('local'); // In test env without R2 credentials
+
+    // Verify row exists in DB
+    const row = db.prepare('SELECT * FROM files WHERE id = ?').get(res.body.id);
+    expect(row).toBeDefined();
+    expect(row.original_name).toBe('cloud-document.pdf');
+  });
+
+  // Test 10: POST /upload/presign rejects file over 50 MB
+  test('POST /upload/presign rejects files exceeding 50 MB limit with 413', async () => {
+    const res = await request(app)
+      .post('/upload/presign')
+      .send({
+        filename: 'massive-video.mov',
+        size: 55 * 1024 * 1024 // 55 MB
+      });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toMatch(/exceeds/i);
+  });
+
+  // Test 11: POST /upload/presign validates required fields
+  test('POST /upload/presign returns 400 when filename or size is invalid', async () => {
+    const res1 = await request(app)
+      .post('/upload/presign')
+      .send({ size: 1024 });
+    expect(res1.status).toBe(400);
+
+    const res2 = await request(app)
+      .post('/upload/presign')
+      .send({ filename: 'test.txt', size: -1 });
+    expect(res2.status).toBe(400);
+  });
+
+  // S3-Compatible Storage Tests
+  describe('S3-Compatible Object Storage Adapter (Cloudflare R2 & Supabase)', () => {
+    const {
+      isR2Configured,
+      getStorageProviderName,
+      resetS3Client,
+      getS3Client,
+      getPresignedUploadUrl,
+      getPresignedDownloadUrl
+    } = require('../src/storage/r2');
+
+    const originalEnv = { ...process.env };
+
+    afterEach(() => {
+      process.env = { ...originalEnv };
+      resetS3Client();
+    });
+
+    test('isR2Configured() returns false when credentials are missing', () => {
+      delete process.env.R2_BUCKET_NAME;
+      delete process.env.R2_ACCESS_KEY_ID;
+      delete process.env.R2_SECRET_ACCESS_KEY;
+      delete process.env.R2_ACCOUNT_ID;
+      delete process.env.R2_ENDPOINT;
+      expect(isR2Configured()).toBe(false);
+      expect(getStorageProviderName()).toBe('local-disk');
+    });
+
+    test('Cloudflare R2 mode: derives endpoint from R2_ACCOUNT_ID', async () => {
+      process.env.R2_BUCKET_NAME = 'my-r2-bucket';
+      process.env.R2_ACCESS_KEY_ID = 'r2-access-key';
+      process.env.R2_SECRET_ACCESS_KEY = 'r2-secret-key';
+      process.env.R2_ACCOUNT_ID = '55b03bafa5e00fcd8ea4112233445566';
+      delete process.env.R2_ENDPOINT;
+
+      expect(isR2Configured()).toBe(true);
+      expect(getStorageProviderName()).toBe('cloudflare-r2');
+
+      const client = getS3Client();
+      expect(client).toBeDefined();
+
+      const uploadUrl = await getPresignedUploadUrl({
+        key: 'cloud-file.pdf',
+        mimeType: 'application/pdf',
+        expiresIn: 60
+      });
+      expect(uploadUrl).toContain('55b03bafa5e00fcd8ea4112233445566.r2.cloudflarestorage.com');
+      expect(uploadUrl).toContain('my-r2-bucket');
+    });
+
+    test('Supabase S3 mode: uses custom R2_ENDPOINT with forcePathStyle', async () => {
+      process.env.R2_BUCKET_NAME = 'supabase-vault';
+      process.env.R2_ACCESS_KEY_ID = 'supabase-s3-key';
+      process.env.R2_SECRET_ACCESS_KEY = 'supabase-s3-secret';
+      process.env.R2_ENDPOINT = 'https://abcdefghijklmnop.storage.supabase.co/storage/v1/s3';
+      process.env.R2_REGION = 'eu-west-2';
+      process.env.R2_FORCE_PATH_STYLE = 'true';
+      delete process.env.R2_ACCOUNT_ID;
+
+      expect(isR2Configured()).toBe(true);
+      expect(getStorageProviderName()).toBe('supabase-s3');
+
+      const client = getS3Client();
+      expect(client).toBeDefined();
+
+      const uploadUrl = await getPresignedUploadUrl({
+        key: 'test-doc.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        expiresIn: 120
+      });
+      expect(uploadUrl).toContain('https://abcdefghijklmnop.storage.supabase.co/storage/v1/s3/supabase-vault/test-doc.docx');
+      expect(uploadUrl).toContain('X-Amz-Signature');
+    });
+
+    test('getPresignedDownloadUrl formats Content-Disposition attachment', async () => {
+      process.env.R2_BUCKET_NAME = 'test-bucket';
+      process.env.R2_ACCESS_KEY_ID = 'key123';
+      process.env.R2_SECRET_ACCESS_KEY = 'secret123';
+      process.env.R2_ENDPOINT = 'https://s3.example.com';
+      process.env.R2_FORCE_PATH_STYLE = 'true';
+
+      const downloadUrl = await getPresignedDownloadUrl({
+        key: 'sample-key.png',
+        filename: 'My Photo.png',
+        mimeType: 'image/png',
+        expiresIn: 60
+      });
+
+      expect(downloadUrl).toContain('https://s3.example.com/test-bucket/sample-key.png');
+      expect(downloadUrl).toContain('response-content-disposition');
+      expect(decodeURIComponent(decodeURIComponent(downloadUrl))).toContain('My Photo.png');
+    });
+  });
 });
+

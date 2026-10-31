@@ -11,14 +11,14 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-      - key: UPLOADS_DIR
-        value: /var/data/uploads
-      - key: DB_PATH
-        value: /var/data/linkvault.db
-    # To persist files and database across redeployments on Render paid plans:
-    # disk:
-    #   name: linkvault-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
+      - key: DATABASE_URL
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+

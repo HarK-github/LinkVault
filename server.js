@@ -2,12 +2,12 @@
  * LinkVault - Express HTTP Server & Main Application Entry Point
  *
  * This file configures the web server and defines all REST API endpoints:
- * - GET /health: Health check endpoint for uptime monitoring
- * - GET /qr: Generates QR codes as SVG for mobile camera scanning
- * - POST /upload: Handles file uploads and creates expiring links
- * - GET /f/:id: Shows file metadata or loads the web page
+ * - GET /health: Health check endpoint with database, storage & room metrics
+ * - POST /upload/presign: Direct-to-Cloudflare-R2 presigned PUT URL generation
+ * - POST /upload: Standard multipart upload (saved to local disk or R2)
+ * - GET /f/:id: Shows file metadata or loads the download web interface
  * - POST /f/:id/verify-password: Validates password without consuming download count
- * - GET & POST /f/:id/download: Streams the requested file to the user
+ * - GET & POST /f/:id/download: Token-gated atomic download (302 redirect to R2 or direct stream)
  * - DELETE /f/:id: Deletes a file using its secret delete token
  * - GET /beam/:roomId: Loads the WebRTC direct peer-to-peer transfer interface
  */
@@ -15,15 +15,27 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+if (typeof process.loadEnvFile === 'function' && fs.existsSync(path.join(__dirname, '.env'))) {
+  process.loadEnvFile(path.join(__dirname, '.env'));
+}
 const crypto = require('crypto');
 const multer = require('multer');
 
 // Internal modules
-const { initDb, getDb } = require('./src/db');
-const { upload, parseExpiry, UPLOADS_DIR } = require('./src/storage');
+const { initDb, isPostgres } = require('./src/db');
+const {
+  upload,
+  parseExpiry,
+  MAX_FILE_SIZE,
+  isR2Configured,
+  getStorageProviderName,
+  getPresignedUploadUrl,
+  getPresignedDownloadUrl
+} = require('./src/storage');
 const {
   getFileById,
   getActiveFile,
+  createFileRecord,
   incrementDownloadAtomic,
   deleteFileRecord,
   getFilePath,
@@ -32,7 +44,7 @@ const {
 const { hashPassword, verifyPassword } = require('./src/auth');
 const { uploadLimiter, downloadLimiter } = require('./src/limiter');
 const { startCleanupInterval, stopCleanupInterval } = require('./src/cleanup');
-const { initSignaling } = require('./src/signaling');
+const { initSignaling, rooms } = require('./src/signaling');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,23 +67,117 @@ function buildFullUrl(req, relativePath) {
 // ROUTES & ENDPOINTS
 // ============================================================================
 
+/**
+ * GET /health
+ * Exposes live health status, memory footprint, and active engine configuration.
+ */
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+  res.status(200).json({
+    status: 'ok',
+    uptime: Math.round(process.uptime()),
+    memoryRssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    activeRooms: rooms ? rooms.size : 0,
+    database: isPostgres() ? 'postgresql' : 'sqlite',
+    storage: getStorageProviderName(),
+    timestamp: Date.now()
+  });
 });
 
+/**
+ * POST /upload/presign
+ * Direct-to-Cloudflare R2 Presigned URL Generation (Option A - Zero Server Egress & Zero RAM).
+ * 1. Checks file size and rate limits.
+ * 2. Hashes password via native crypto.scryptSync (if provided).
+ * 3. Pre-allocates metadata in PostgreSQL.
+ * 4. Generates a 60-second S3/R2 presigned PUT URL.
+ * 5. Returns presigned URL to browser for direct binary upload.
+ */
+app.post('/upload/presign', uploadLimiter, async (req, res) => {
+  if (!isR2Configured() && process.env.NODE_ENV !== 'test') {
+    return res.status(501).json({ error: 'Direct storage upload requires Cloudflare R2' });
+  }
+
+  try {
+    const { filename, size, mimeType, expiry, password, max_downloads } = req.body || {};
+
+    if (!filename || typeof filename !== 'string') {
+      return res.status(400).json({ error: 'Filename is required' });
+    }
+
+    const fileSize = parseInt(size, 10);
+    if (isNaN(fileSize) || fileSize <= 0) {
+      return res.status(400).json({ error: 'Valid file size is required' });
+    }
+
+    if (fileSize > MAX_FILE_SIZE) {
+      return res.status(413).json({ error: 'File size exceeds maximum limit of 50 MB' });
+    }
+
+    const id = crypto.randomBytes(12).toString('hex');
+    const deleteToken = crypto.randomBytes(16).toString('hex');
+    const cleanOriginalName = path.basename(filename);
+    const fileExtension = path.extname(cleanOriginalName).slice(0, 10);
+    const storedName = `${crypto.randomUUID()}${fileExtension}`;
+    const cleanMimeType = mimeType || 'application/octet-stream';
+    const createdAt = Date.now();
+    const expiresAt = parseExpiry(expiry);
+    const passwordHash = hashPassword(password);
+    const maxDownloads = parseMaxDownloads(max_downloads);
+    const storageType = isR2Configured() ? 'r2' : 'local';
+
+    await createFileRecord({
+      id,
+      originalName: cleanOriginalName,
+      storedName,
+      size: fileSize,
+      mimeType: cleanMimeType,
+      passwordHash,
+      expiresAt,
+      maxDownloads,
+      deleteToken,
+      createdAt,
+      storageType
+    });
+
+    const downloadUrl = `/f/${id}`;
+    const fullUrl = buildFullUrl(req, downloadUrl);
+
+    let uploadUrl = null;
+    if (storageType === 'r2') {
+      uploadUrl = await getPresignedUploadUrl({
+        key: storedName,
+        mimeType: cleanMimeType,
+        expiresIn: 120
+      });
+    }
+
+    return res.status(201).json({
+      id,
+      download_url: downloadUrl,
+      full_url: fullUrl,
+      delete_token: deleteToken,
+      original_name: cleanOriginalName,
+      size: fileSize,
+      has_password: Boolean(passwordHash),
+      expires_at: expiresAt,
+      max_downloads: maxDownloads,
+      storage_type: storageType,
+      upload_url: uploadUrl, // Null if local fallback
+      created_at: createdAt
+    });
+  } catch (err) {
+    console.error('Error generating presigned upload:', err);
+    return res.status(500).json({ error: 'Failed to initialize upload' });
+  }
+});
 
 /**
  * POST /upload
- * Handles file uploads:
- * 1. Multer receives the multipart file and saves it into /uploads.
- * 2. Generates a random 24-character file ID and a secret 32-character delete token.
- * 3. Hashes the password (if supplied).
- * 4. Inserts the file metadata record into the SQLite database.
- * 5. Returns the shareable link and delete token to the uploader.
+ * Standard multipart/form-data upload route:
+ * Used for local testing, fallback, and automated unit tests.
  */
 app.post('/upload', uploadLimiter, (req, res) => {
-  upload.single('file')(req, res, (err) => {
-    // 1. Handle file upload errors
+  upload.single('file')(req, res, async (err) => {
     if (err) {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ error: 'File exceeds 50 MB limit' });
@@ -84,44 +190,41 @@ app.post('/upload', uploadLimiter, (req, res) => {
     }
 
     try {
-      const db = getDb();
-
-      // Generate cryptographically random identifiers
-      const id = crypto.randomBytes(12).toString('hex');          // 24 hex characters
-      const deleteToken = crypto.randomBytes(16).toString('hex'); // 32 hex characters
-
+      const id = crypto.randomBytes(12).toString('hex');
+      const deleteToken = crypto.randomBytes(16).toString('hex');
       const originalName = path.basename(req.file.originalname);
       const storedName = req.file.filename;
       const size = req.file.size;
+      const mimeType = req.file.mimetype || 'application/octet-stream';
       const createdAt = Date.now();
       const expiresAt = parseExpiry(req.body.expiry);
       const passwordHash = hashPassword(req.body.password);
       const maxDownloads = parseMaxDownloads(req.body.max_downloads);
 
-      // Insert metadata into the database
-      const insertStatement = db.prepare(`
-        INSERT INTO files (
-          id, original_name, stored_name, size, password_hash,
-          expires_at, max_downloads, downloads, delete_token, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-      `);
-
-      insertStatement.run(
-        id, originalName, storedName, size, passwordHash,
-        expiresAt, maxDownloads, deleteToken, createdAt
-      );
+      await createFileRecord({
+        id,
+        originalName,
+        storedName,
+        size,
+        mimeType,
+        passwordHash,
+        expiresAt,
+        maxDownloads,
+        deleteToken,
+        createdAt,
+        storageType: 'local'
+      });
 
       const downloadUrl = `/f/${id}`;
       const fullUrl = buildFullUrl(req, downloadUrl);
 
-      // Respond with link and management metadata
       return res.status(201).json({
-        id: id,
+        id,
         download_url: downloadUrl,
         full_url: fullUrl,
         delete_token: deleteToken,
         original_name: originalName,
-        size: size,
+        size,
         has_password: Boolean(passwordHash),
         expires_at: expiresAt,
         max_downloads: maxDownloads,
@@ -140,8 +243,8 @@ app.post('/upload', uploadLimiter, (req, res) => {
  * - If requested by a web browser (accept: text/html), serves index.html to show download UI.
  * - If requested via AJAX or API, returns file metadata JSON.
  */
-app.get('/f/:id', downloadLimiter, (req, res) => {
-  const file = getActiveFile(req.params.id);
+app.get('/f/:id', downloadLimiter, async (req, res) => {
+  const file = await getActiveFile(req.params.id);
   const isHtml = Boolean(req.headers.accept && req.headers.accept.includes('text/html') && !req.xhr);
   const indexPath = path.join(__dirname, 'public', 'index.html');
 
@@ -160,18 +263,16 @@ app.get('/beam/:roomId', (req, res) => {
  * Checks if the user-entered password is correct BEFORE initiating a download.
  * Does not decrement the download limit.
  */
-app.post('/f/:id/verify-password', (req, res) => {
-  const file = getActiveFile(req.params.id);
+app.post('/f/:id/verify-password', async (req, res) => {
+  const file = await getActiveFile(req.params.id);
   if (!file) {
     return res.status(404).json({ error: 'File not found or link has expired' });
   }
 
-  // If the file is not password-protected, verification automatically succeeds
   if (!file.password_hash) {
     return res.status(200).json({ ok: true });
   }
 
-  // Get password from JSON body or URL query
   const providedPassword = (req.body && req.body.password) || (req.query && req.query.password);
   if (!verifyPassword(providedPassword, file.password_hash)) {
     return res.status(403).json({ error: 'Incorrect password' });
@@ -183,13 +284,14 @@ app.post('/f/:id/verify-password', (req, res) => {
 /**
  * Core Download Handler function:
  * Used by both GET /f/:id/download and POST /f/:id/download.
- * 1. Checks that the file is active (not expired).
- * 2. Checks password (if required).
- * 3. Atomically increments download count in SQLite (prevents race conditions).
- * 4. Streams the binary file to the user's browser.
+ * 1. Validates that the file is active (not expired).
+ * 2. Checks password (if required) using constant-time comparison.
+ * 3. Atomically increments download count in PostgreSQL/SQLite using a single conditional UPDATE.
+ * 4. Offloading: If stored on Cloudflare R2, signs a 60s presigned GET URL and issues HTTP 302.
+ *               If stored locally, streams the file directly from disk.
  */
-function handleDownload(req, res) {
-  const file = getActiveFile(req.params.id);
+async function handleDownload(req, res) {
+  const file = await getActiveFile(req.params.id);
   if (!file) {
     return res.status(404).json({ error: 'File not found or link has expired' });
   }
@@ -202,19 +304,33 @@ function handleDownload(req, res) {
     }
   }
 
-  // 2. Atomic download count increment
-  const wasIncremented = incrementDownloadAtomic(file.id);
-  if (!wasIncremented) {
+  // 2. Atomic download count increment via single conditional statement
+  const updatedFile = await incrementDownloadAtomic(file.id);
+  if (!updatedFile) {
     return res.status(404).json({ error: 'File not found or link has expired' });
   }
 
-  // 3. Check physical file existence on disk
+  // 3. Cloudflare R2 presigned GET offloading (Two-Phase Token-Gated Pattern)
+  if (file.storage_type === 'r2') {
+    const presignedDownloadUrl = await getPresignedDownloadUrl({
+      key: file.stored_name,
+      filename: file.original_name,
+      mimeType: file.mime_type,
+      expiresIn: 60
+    });
+
+    if (req.headers.accept && req.headers.accept.includes('application/json') && !req.query.direct) {
+      return res.status(200).json({ downloadUrl: presignedDownloadUrl });
+    }
+    return res.redirect(302, presignedDownloadUrl);
+  }
+
+  // 4. Local disk storage fallback
   const physicalPath = getFilePath(file.stored_name);
   if (!fs.existsSync(physicalPath)) {
     return res.status(404).json({ error: 'File not found on disk' });
   }
 
-  // 4. Send file download stream with Content-Disposition attachment header
   const encodedFilename = encodeURIComponent(file.original_name);
   res.setHeader(
     'Content-Disposition',
@@ -230,20 +346,18 @@ app.all('/f/:id/download', downloadLimiter, handleDownload);
  * DELETE /f/:id
  * Allows the original uploader to delete their file immediately using their secret delete token.
  */
-app.delete('/f/:id', (req, res) => {
-  const file = getFileById(req.params.id);
+app.delete('/f/:id', async (req, res) => {
+  const file = await getFileById(req.params.id);
   if (!file) {
     return res.status(404).json({ error: 'File not found or link has expired' });
   }
 
-  // Extract delete token from HTTP header or query string
   const token = req.headers['x-delete-token'] || (req.query && req.query.token);
   if (!token || token !== file.delete_token) {
     return res.status(403).json({ error: 'Invalid or missing delete token' });
   }
 
-  // Delete from disk and database
-  deleteFileRecord(file.id);
+  await deleteFileRecord(file.id);
   return res.status(200).json({ success: true, message: 'File deleted successfully' });
 });
 

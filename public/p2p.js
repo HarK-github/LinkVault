@@ -32,6 +32,33 @@
     { urls: 'stun:stun.cloudflare.com:3478' }
   ];
 
+  // Lightweight transfer resume tracking via localStorage
+  const LinkVaultCache = {
+    saveResumeRecord(fileId, lastContiguousChunk, totalChunks) {
+      try {
+        localStorage.setItem(`lv_resume_${fileId}`, JSON.stringify({
+          fileId,
+          lastContiguousChunk,
+          totalChunks,
+          updatedAt: Date.now()
+        }));
+      } catch (err) {}
+    },
+    getResumeRecord(fileId) {
+      try {
+        const item = localStorage.getItem(`lv_resume_${fileId}`);
+        return item ? JSON.parse(item) : null;
+      } catch (err) {
+        return null;
+      }
+    },
+    clearResumeRecord(fileId) {
+      try {
+        localStorage.removeItem(`lv_resume_${fileId}`);
+      } catch (err) {}
+    }
+  };
+
   class BeamSession {
     /**
      * Initializes a new WebRTC Direct Beam session.
@@ -481,8 +508,8 @@
       this.chunksBuffer = [];
 
       let startChunk = 0;
-      if (window.LinkVaultCache) {
-        const resumeInfo = await window.LinkVaultCache.getResumeRecord(this.meta.fileId);
+      if (LinkVaultCache) {
+        const resumeInfo = await LinkVaultCache.getResumeRecord(this.meta.fileId);
         if (resumeInfo && resumeInfo.lastContiguousChunk > 0) {
           startChunk = resumeInfo.lastContiguousChunk + 1;
         }
@@ -532,8 +559,8 @@
       }
 
       const currentChunk = Math.floor(this.bytesTransferred / CHUNK_SIZE);
-      if (window.LinkVaultCache && this.meta) {
-        window.LinkVaultCache.saveResumeRecord(this.meta.fileId, currentChunk, this.meta.totalChunks);
+      if (LinkVaultCache && this.meta) {
+        LinkVaultCache.saveResumeRecord(this.meta.fileId, currentChunk, this.meta.totalChunks);
       }
 
       this.updateMetrics(this.bytesTransferred, this.meta.size);
@@ -562,8 +589,8 @@
         }, 1000);
       }
 
-      if (window.LinkVaultCache && this.meta) {
-        window.LinkVaultCache.clearResumeRecord(this.meta.fileId);
+      if (LinkVaultCache && this.meta) {
+        LinkVaultCache.clearResumeRecord(this.meta.fileId);
       }
 
       this.callbacks.onComplete();

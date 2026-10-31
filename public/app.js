@@ -368,18 +368,56 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadBtnText.textContent = 'Uploading & encrypting...';
 
     try {
-      const response = await fetch('/upload', {
-        method: 'POST',
-        body: formData
-      });
+      let data = null;
 
-      const data = await response.json();
+      // 1. Try direct presigned upload (Cloudflare R2 mode: zero server bandwidth)
+      try {
+        const presignRes = await fetch('/upload/presign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            size: file.size,
+            mimeType: file.type || 'application/octet-stream',
+            expiry: formData.get('expiry'),
+            password: formData.get('password'),
+            max_downloads: formData.get('max_downloads')
+          })
+        });
 
-      if (!response.ok) {
-        showToast(data.error || 'Upload failed.', 'error');
-        btnUpload.disabled = false;
-        uploadBtnText.textContent = 'Generate Secure Link';
-        return;
+        if (presignRes.ok) {
+          const presignData = await presignRes.json();
+          if (presignData.upload_url) {
+            uploadBtnText.textContent = 'Uploading to storage...';
+            const r2Res = await fetch(presignData.upload_url, {
+              method: 'PUT',
+              headers: { 'Content-Type': file.type || 'application/octet-stream' },
+              body: file
+            });
+            if (r2Res.ok) {
+              data = presignData;
+            }
+          }
+        }
+      } catch (presignErr) {
+        console.warn('Presigned R2 upload bypassed, falling back to server disk upload:', presignErr);
+      }
+
+      // 2. Fall back to standard server multipart upload if R2 not configured
+      if (!data) {
+        uploadBtnText.textContent = 'Uploading & encrypting...';
+        const response = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+        data = await response.json();
+
+        if (!response.ok) {
+          showToast(data.error || 'Upload failed.', 'error');
+          btnUpload.disabled = false;
+          uploadBtnText.textContent = 'Generate Secure Link';
+          return;
+        }
       }
 
       // Display result view

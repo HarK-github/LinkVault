@@ -1,31 +1,26 @@
 /**
  * LinkVault - File Record and Database Query Operations
  *
- * This module handles all database reads and writes for uploaded files,
- * including checking expiration dates, atomic download counting,
- * and deleting files from both the disk and database.
+ * Handles database access across PostgreSQL and SQLite,
+ * including single-statement atomic download caps, expiration verification,
+ * and deleting files from Cloudflare R2 and local disk.
  */
 
 const path = require('path');
 const fs = require('fs');
-const { getDb } = require('./db');
+const { query, queryOne, execute } = require('./db');
 const { UPLOADS_DIR } = require('./storage');
+const { deleteR2Object } = require('./storage/r2');
 
 /**
- * Returns the full absolute path of a stored file on the filesystem.
- *
- * @param {string} storedName - The random filename assigned when saved on disk.
- * @returns {string} Full filesystem path (e.g. /app/uploads/abc-123.pdf).
+ * Returns the full absolute path of a stored local file.
  */
 function getFilePath(storedName) {
   return path.join(UPLOADS_DIR, storedName);
 }
 
 /**
- * Safely removes a file from the server's filesystem if it exists.
- * Does not throw an error if the file was already deleted.
- *
- * @param {string} fullPath - The absolute path of the file to remove.
+ * Safely removes a file from the server filesystem if it exists.
  */
 function removeFileFromDisk(fullPath) {
   try {
@@ -36,78 +31,92 @@ function removeFileFromDisk(fullPath) {
 }
 
 /**
- * Deletes a file record from the database AND removes its file from disk.
- *
- * @param {string} id - The unique file ID.
- * @returns {boolean} True if the record was found and deleted, false otherwise.
+ * Creates a new file record in the database.
  */
-function deleteFileRecord(id) {
-  const db = getDb();
+async function createFileRecord({
+  id,
+  originalName,
+  storedName,
+  size,
+  mimeType = 'application/octet-stream',
+  passwordHash = null,
+  expiresAt,
+  maxDownloads = null,
+  deleteToken,
+  createdAt = Date.now(),
+  storageType = 'local'
+}) {
+  const sql = `
+    INSERT INTO files (
+      id, original_name, stored_name, size, mime_type, password_hash,
+      expires_at, max_downloads, downloads, delete_token, created_at, storage_type
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11)
+  `;
 
-  // 1. Look up the stored disk filename before deleting the row
-  const selectQuery = db.prepare('SELECT stored_name FROM files WHERE id = ?');
-  const fileRecord = selectQuery.get(id);
+  await execute(sql, [
+    id, originalName, storedName, size, mimeType, passwordHash,
+    expiresAt, maxDownloads, deleteToken, createdAt, storageType
+  ]);
 
-  // 2. If the file exists, delete it from the hard drive
+  return {
+    id, originalName, storedName, size, mimeType,
+    expiresAt, maxDownloads, deleteToken, createdAt, storageType
+  };
+}
+
+/**
+ * Deletes a file record from the database AND removes binary storage (R2 or local disk).
+ *
+ * @param {string} id - Unique file identifier
+ * @returns {Promise<boolean>} True if found and deleted
+ */
+async function deleteFileRecord(id) {
+  const fileRecord = await queryOne('SELECT stored_name, storage_type FROM files WHERE id = $1', [id]);
+
   if (fileRecord) {
-    const fullPath = getFilePath(fileRecord.stored_name);
-    removeFileFromDisk(fullPath);
+    if (fileRecord.storage_type === 'r2') {
+      await deleteR2Object(fileRecord.stored_name);
+    } else {
+      const fullPath = getFilePath(fileRecord.stored_name);
+      removeFileFromDisk(fullPath);
+    }
   }
 
-  // 3. Delete the row from the database
-  const deleteQuery = db.prepare('DELETE FROM files WHERE id = ?');
-  const result = deleteQuery.run(id);
-
-  // result.changes is the number of rows deleted (1 if successful, 0 if not found)
-  return result.changes > 0;
+  const deletedCount = await execute('DELETE FROM files WHERE id = $1', [id]);
+  return deletedCount > 0;
 }
 
 /**
- * Retrieves a file record from the database by its ID, regardless of whether
- * it is expired or has reached its download limit.
+ * Retrieves a file record by its ID without validity checks.
  *
- * @param {string} id - The unique file ID.
- * @returns {object|null} The database row object, or null if not found.
+ * @param {string} id
+ * @returns {Promise<object|null>}
  */
-function getFileById(id) {
-  const db = getDb();
-  const selectQuery = db.prepare('SELECT * FROM files WHERE id = ?');
-  const file = selectQuery.get(id);
-
-  if (!file) {
-    return null;
-  }
-  return file;
+async function getFileById(id) {
+  return queryOne('SELECT * FROM files WHERE id = $1', [id]);
 }
 
 /**
- * Retrieves a file ONLY if it is still valid and active:
- * 1. Checks if the file exists in the database.
- * 2. Checks if the expiration timestamp has passed (if expired, automatically deletes it).
- * 3. Checks if the maximum download limit has already been reached.
+ * Retrieves an active file record:
+ * - Checks existence
+ * - Checks expiration (if expired, automatically triggers deletion)
+ * - Checks download caps
  *
- * @param {string} id - The unique file ID.
- * @returns {object|null} The active file record, or null if invalid/expired.
+ * @param {string} id
+ * @returns {Promise<object|null>}
  */
-function getActiveFile(id) {
-  const file = getFileById(id);
+async function getActiveFile(id) {
+  const file = await getFileById(id);
+  if (!file) return null;
 
-  // 1. If file does not exist at all
-  if (!file) {
+  const now = Date.now();
+  if (Number(file.expires_at) <= now) {
+    await deleteFileRecord(id);
     return null;
   }
 
-  // 2. Check if the link has expired
-  const currentTime = Date.now();
-  if (file.expires_at <= currentTime) {
-    // Clean up expired file immediately
-    deleteFileRecord(id);
-    return null;
-  }
-
-  // 3. Check if download limit has already been reached
-  const hasDownloadLimit = file.max_downloads !== null;
-  if (hasDownloadLimit && file.downloads >= file.max_downloads) {
+  const hasLimit = file.max_downloads !== null && file.max_downloads !== undefined;
+  if (hasLimit && Number(file.downloads) >= Number(file.max_downloads)) {
     return null;
   }
 
@@ -115,66 +124,61 @@ function getActiveFile(id) {
 }
 
 /**
- * Atomically increments the download counter in the database.
+ * Atomically increments the download counter using a single SQL conditional statement.
  *
- * Why ATOMIC?
- * If two users click download at the exact same millisecond when max_downloads is 1,
- * doing a simple (SELECT then UPDATE) would allow BOTH users to download.
- * By putting "WHERE (max_downloads IS NULL OR downloads < max_downloads)"
- * directly inside the single SQL statement, SQLite guarantees only ONE update succeeds.
+ * Concurrency Control:
+ * "UPDATE ... WHERE id = $1 AND downloads < max_downloads AND expires_at > $2 RETURNING *"
+ * PostgreSQL row-level locks and SQLite WAL write serialization guarantee that exactly
+ * ONE query increments the counter when competing threads arrive simultaneously.
  *
- * @param {string} id - The unique file ID.
- * @returns {boolean} True if the counter was incremented, false if limit was reached.
+ * @param {string} id - Unique file identifier
+ * @returns {Promise<object|null>} Updated file record if permitted, null if limit reached
  */
-function incrementDownloadAtomic(id) {
-  const db = getDb();
-  const updateQuery = db.prepare(`
+async function incrementDownloadAtomic(id) {
+  const now = Date.now();
+  const sql = `
     UPDATE files
     SET downloads = downloads + 1
-    WHERE id = ? AND (max_downloads IS NULL OR downloads < max_downloads)
-  `);
+    WHERE id = $1
+      AND (max_downloads IS NULL OR downloads < max_downloads)
+      AND expires_at > $2
+    RETURNING *
+  `;
 
-  const result = updateQuery.run(id);
-
-  // If changes === 1, the increment succeeded and the download is permitted.
-  // If changes === 0, the download limit was already reached by a concurrent request.
-  return result.changes > 0;
+  const updatedFile = await queryOne(sql, [id, now]);
+  return updatedFile; // Returns object if succeeded (rowCount === 1), null if cap reached (rowCount === 0)
 }
 
 /**
- * Formats a raw database row into a safe, client-facing JSON object.
- * Strips out sensitive fields such as stored_name, delete_token, and password_hash.
- *
- * @param {object|null} file - Raw database row object.
- * @returns {object|null} Sanitized metadata object for the client.
+ * Formats a raw database row into a safe client-facing JSON payload.
  */
 function formatFileResponse(file) {
-  if (!file) {
-    return null;
-  }
+  if (!file) return null;
 
-  // Calculate remaining downloads if there is a limit
   let remainingDownloads = null;
-  if (file.max_downloads !== null) {
-    remainingDownloads = Math.max(0, file.max_downloads - file.downloads);
+  if (file.max_downloads !== null && file.max_downloads !== undefined) {
+    remainingDownloads = Math.max(0, Number(file.max_downloads) - Number(file.downloads));
   }
 
   return {
     id: file.id,
     original_name: file.original_name,
-    size: file.size,
-    expires_at: file.expires_at,
-    max_downloads: file.max_downloads,
-    downloads: file.downloads,
+    size: Number(file.size),
+    mime_type: file.mime_type || 'application/octet-stream',
+    expires_at: Number(file.expires_at),
+    max_downloads: file.max_downloads !== null ? Number(file.max_downloads) : null,
+    downloads: Number(file.downloads),
     remaining_downloads: remainingDownloads,
     has_password: Boolean(file.password_hash),
-    created_at: file.created_at
+    storage_type: file.storage_type || 'local',
+    created_at: Number(file.created_at)
   };
 }
 
 module.exports = {
   getFilePath,
   removeFileFromDisk,
+  createFileRecord,
   getFileById,
   getActiveFile,
   incrementDownloadAtomic,

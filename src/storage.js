@@ -103,9 +103,12 @@ function parseExpiry(expiryInput) {
   return now + DEFAULT_24_HOURS_MS;
 }
 
+const r2 = require('./storage/r2');
+
 module.exports = {
   UPLOADS_DIR,
   MAX_FILE_SIZE,
   upload,
-  parseExpiry
+  parseExpiry,
+  ...r2
 };

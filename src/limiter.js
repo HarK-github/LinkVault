@@ -16,6 +16,14 @@ function createLimiter(windowMs, max, message) {
 
     timestamps.push(now);
     requests.set(ip, timestamps);
+
+    // Evict expired entries when map grows to prevent memory leaks from bot traffic
+    if (requests.size > 2000) {
+      for (const [k, v] of requests) {
+        if (v.every((t) => now - t >= windowMs)) requests.delete(k);
+      }
+    }
+
     next();
   };
 }
